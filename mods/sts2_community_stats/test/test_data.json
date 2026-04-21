@@ -1,0 +1,146 @@
+{
+  "generated_at": "2026-04-01T12:00:00Z",
+  "total_runs": 42850,
+  "cards": {
+    "STRIKE_IRONCLAD":   { "pick": 0.10, "win": 0.48, "removal": 0.25, "upgrade": 0.05, "shop_buy": 0.02, "n": 20000 },
+    "DEFEND_IRONCLAD":   { "pick": 0.10, "win": 0.47, "removal": 0.22, "upgrade": 0.08, "shop_buy": 0.02, "n": 20000 },
+    "BASH":              { "pick": 0.15, "win": 0.52, "removal": 0.12, "upgrade": 0.20, "shop_buy": 0.08, "n": 15000 },
+    "BLUDGEON":          { "pick": 0.55, "win": 0.62, "removal": 0.04, "upgrade": 0.25, "shop_buy": 0.18, "n": 4000  },
+    "BARRICADE":         { "pick": 0.35, "win": 0.70, "removal": 0.02, "upgrade": 0.40, "shop_buy": 0.22, "n": 2500  },
+    "BODY_SLAM":         { "pick": 0.65, "win": 0.58, "removal": 0.06, "upgrade": 0.35, "shop_buy": 0.15, "n": 6000  },
+    "AGGRESSION":        { "pick": 0.72, "win": 0.54, "removal": 0.08, "upgrade": 0.30, "shop_buy": 0.12, "n": 8000  },
+    "BATTLE_TRANCE":     { "pick": 0.80, "win": 0.60, "removal": 0.03, "upgrade": 0.45, "shop_buy": 0.20, "n": 7500  },
+    "BLOODLETTING":      { "pick": 0.45, "win": 0.56, "removal": 0.10, "upgrade": 0.15, "shop_buy": 0.10, "n": 5000  },
+    "BLOOD_WALL":        { "pick": 0.38, "win": 0.64, "removal": 0.05, "upgrade": 0.28, "shop_buy": 0.14, "n": 3500  },
+    "ARMAMENTS":         { "pick": 0.60, "win": 0.55, "removal": 0.07, "upgrade": 0.50, "shop_buy": 0.16, "n": 9000  },
+    "FIGHT_ME":          { "pick": 0.42, "win": 0.53, "removal": 0.09, "upgrade": 0.22, "shop_buy": 0.11, "n": 5200  },
+    "GRAPPLE":           { "pick": 0.58, "win": 0.57, "removal": 0.06, "upgrade": 0.33, "shop_buy": 0.14, "n": 4800  },
+    "RAMPAGE":           { "pick": 0.48, "win": 0.61, "removal": 0.05, "upgrade": 0.38, "shop_buy": 0.17, "n": 3600  },
+    "PUMMEL":            { "pick": 0.62, "win": 0.59, "removal": 0.04, "upgrade": 0.42, "shop_buy": 0.19, "n": 5500  },
+    "ASHEN_STRIKE":      { "pick": 0.33, "win": 0.51, "removal": 0.15, "upgrade": 0.12, "shop_buy": 0.06, "n": 6200  },
+    "ANGER":             { "pick": 0.40, "win": 0.50, "removal": 0.11, "upgrade": 0.18, "shop_buy": 0.09, "n": 7000  },
+    "CLEANSE":           { "pick": 0.28, "win": 0.53, "removal": 0.08, "upgrade": 0.25, "shop_buy": 0.10, "n": 4200  },
+
+    "STRIKE_SILENT":     { "pick": 0.10, "win": 0.49, "removal": 0.28, "upgrade": 0.04, "shop_buy": 0.02, "n": 18000 },
+    "DEFEND_SILENT":     { "pick": 0.10, "win": 0.48, "removal": 0.20, "upgrade": 0.06, "shop_buy": 0.02, "n": 18000 },
+    "NEUTRALIZE":        { "pick": 0.10, "win": 0.48, "removal": 0.20, "upgrade": 0.10, "shop_buy": 0.05, "n": 12000 },
+    "BACKSTAB":          { "pick": 0.72, "win": 0.65, "removal": 0.05, "upgrade": 0.30, "shop_buy": 0.15, "n": 5000  },
+    "ACROBATICS":        { "pick": 0.85, "win": 0.58, "removal": 0.03, "upgrade": 0.45, "shop_buy": 0.20, "n": 8000  },
+    "BLADE_DANCE":       { "pick": 0.90, "win": 0.55, "removal": 0.02, "upgrade": 0.50, "shop_buy": 0.25, "n": 10000 },
+    "DASH":              { "pick": 0.40, "win": 0.70, "removal": 0.08, "upgrade": 0.15, "shop_buy": 0.10, "n": 3000  },
+    "WRAITH_FORM":       { "pick": 0.60, "win": 0.75, "removal": 0.01, "upgrade": 0.60, "shop_buy": 0.30, "n": 2000  },
+    "FOOTWORK":          { "pick": 0.78, "win": 0.66, "removal": 0.03, "upgrade": 0.55, "shop_buy": 0.22, "n": 7000  },
+    "NOXIOUS_FUMES":     { "pick": 0.68, "win": 0.63, "removal": 0.04, "upgrade": 0.40, "shop_buy": 0.18, "n": 4500  },
+    "MALAISE":           { "pick": 0.50, "win": 0.72, "removal": 0.02, "upgrade": 0.35, "shop_buy": 0.28, "n": 2200  },
+    "BURST":             { "pick": 0.55, "win": 0.68, "removal": 0.03, "upgrade": 0.32, "shop_buy": 0.24, "n": 3800  },
+
+    "STRIKE_DEFECT":     { "pick": 0.10, "win": 0.47, "removal": 0.30, "upgrade": 0.04, "shop_buy": 0.02, "n": 16000 },
+    "DEFEND_DEFECT":     { "pick": 0.10, "win": 0.46, "removal": 0.25, "upgrade": 0.06, "shop_buy": 0.02, "n": 16000 },
+    "BOUNCING_FLASK":    { "pick": 0.42, "win": 0.53, "removal": 0.09, "upgrade": 0.20, "shop_buy": 0.12, "n": 5500  },
+
+    "STRIKE_REGENT":     { "pick": 0.10, "win": 0.50, "removal": 0.22, "upgrade": 0.05, "shop_buy": 0.02, "n": 14000 },
+    "DEFEND_REGENT":     { "pick": 0.10, "win": 0.49, "removal": 0.18, "upgrade": 0.07, "shop_buy": 0.02, "n": 14000 },
+
+    "STRIKE_NECROBINDER":{ "pick": 0.10, "win": 0.46, "removal": 0.32, "upgrade": 0.04, "shop_buy": 0.02, "n": 12000 },
+    "DEFEND_NECROBINDER":{ "pick": 0.10, "win": 0.45, "removal": 0.28, "upgrade": 0.06, "shop_buy": 0.02, "n": 12000 }
+  },
+
+  "relics": {
+    "KUNAI":              { "win": 0.68, "pick": 0.80, "shop_buy": 0.35, "n": 6000  },
+    "SHURIKEN":           { "win": 0.65, "pick": 0.75, "shop_buy": 0.30, "n": 5500  },
+    "SNECKO_EYE":         { "win": 0.72, "pick": 0.45, "shop_buy": 0.00, "n": 3000  },
+    "LANTERN":            { "win": 0.55, "pick": 0.60, "shop_buy": 0.20, "n": 8000  },
+    "BURNING_BLOOD":      { "win": 0.53, "pick": 0.10, "shop_buy": 0.00, "n": 20000 },
+    "RING_OF_THE_SNAKE":  { "win": 0.54, "pick": 0.10, "shop_buy": 0.00, "n": 18000 },
+    "CRACKED_CORE":       { "win": 0.52, "pick": 0.10, "shop_buy": 0.00, "n": 16000 },
+    "PANDORAS_BOX":       { "win": 0.42, "pick": 0.30, "shop_buy": 0.00, "n": 2000  },
+    "ASTROLABE":          { "win": 0.70, "pick": 0.85, "shop_buy": 0.00, "n": 4500  },
+    "ICE_CREAM":          { "win": 0.73, "pick": 0.88, "shop_buy": 0.38, "n": 3200  },
+    "AKABEKO":            { "win": 0.60, "pick": 0.72, "shop_buy": 0.25, "n": 7000  },
+    "BAG_OF_PREPARATION": { "win": 0.57, "pick": 0.65, "shop_buy": 0.18, "n": 6500  },
+    "HAPPY_FLOWER":       { "win": 0.56, "pick": 0.62, "shop_buy": 0.22, "n": 5800  },
+    "VAJRA":              { "win": 0.54, "pick": 0.58, "shop_buy": 0.15, "n": 9000  },
+    "ORICHALCUM":         { "win": 0.55, "pick": 0.60, "shop_buy": 0.20, "n": 8500  },
+    "BRONZE_SCALES":      { "win": 0.52, "pick": 0.50, "shop_buy": 0.12, "n": 7500  }
+  },
+
+  "events": {
+    "NEOW": {
+      "options": [
+        { "idx": 0, "sel": 0.35, "win": 0.60, "n": 10000 },
+        { "idx": 1, "sel": 0.25, "win": 0.55, "n": 7000  },
+        { "idx": 2, "sel": 0.30, "win": 0.58, "n": 8500  },
+        { "idx": 3, "sel": 0.10, "win": 0.70, "n": 2800  }
+      ]
+    },
+    "ABYSSAL_BATHS": {
+      "options": [
+        { "idx": 0, "sel": 0.50, "win": 0.52, "n": 6000 },
+        { "idx": 1, "sel": 0.35, "win": 0.58, "n": 4200 },
+        { "idx": 2, "sel": 0.15, "win": 0.45, "n": 1800 }
+      ]
+    },
+    "GRAVE_OF_THE_FORGOTTEN": {
+      "options": [
+        { "idx": 0, "sel": 0.60, "win": 0.55, "n": 5000 },
+        { "idx": 1, "sel": 0.40, "win": 0.62, "n": 3300 }
+      ]
+    },
+    "LUMINOUS_CHOIR": {
+      "options": [
+        { "idx": 0, "sel": 0.45, "win": 0.58, "n": 3600 },
+        { "idx": 1, "sel": 0.30, "win": 0.52, "n": 2400 },
+        { "idx": 2, "sel": 0.25, "win": 0.65, "n": 2000 }
+      ]
+    },
+    "TEA_MASTER": {
+      "options": [
+        { "idx": 0, "sel": 0.55, "win": 0.50, "n": 4400 },
+        { "idx": 1, "sel": 0.45, "win": 0.57, "n": 3600 }
+      ]
+    },
+    "SELF_HELP_BOOK": {
+      "options": [
+        { "idx": 0, "sel": 0.70, "win": 0.54, "n": 7000 },
+        { "idx": 1, "sel": 0.30, "win": 0.60, "n": 3000 }
+      ]
+    },
+    "ROOM_FULL_OF_CHEESE": {
+      "options": [
+        { "idx": 0, "sel": 0.80, "win": 0.51, "n": 8000 },
+        { "idx": 1, "sel": 0.20, "win": 0.56, "n": 2000 }
+      ]
+    }
+  },
+
+  "encounters": {
+    "SLIMES_NORMAL":              { "type": "normal", "avg_dmg": 8.5,  "death": 0.025, "avg_turns": 3.2, "n": 15000 },
+    "SLIMES_WEAK":                { "type": "normal", "avg_dmg": 4.2,  "death": 0.008, "avg_turns": 2.1, "n": 12000 },
+    "CULTISTS_NORMAL":            { "type": "normal", "avg_dmg": 12.3, "death": 0.045, "avg_turns": 4.0, "n": 10000 },
+    "EXOSKELETONS_NORMAL":        { "type": "normal", "avg_dmg": 10.8, "death": 0.035, "avg_turns": 3.5, "n": 11000 },
+    "INKLETS_NORMAL":             { "type": "normal", "avg_dmg": 6.1,  "death": 0.015, "avg_turns": 2.8, "n": 13000 },
+    "FROG_KNIGHT_NORMAL":         { "type": "normal", "avg_dmg": 14.5, "death": 0.055, "avg_turns": 4.5, "n": 8000  },
+    "MAWLER_NORMAL":              { "type": "normal", "avg_dmg": 11.2, "death": 0.040, "avg_turns": 3.8, "n": 9000  },
+    "CONSTRUCT_MENAGERIE_NORMAL": { "type": "normal", "avg_dmg": 9.7,  "death": 0.030, "avg_turns": 3.3, "n": 10500 },
+    "TOADPOLES_NORMAL":           { "type": "normal", "avg_dmg": 7.0,  "death": 0.018, "avg_turns": 2.5, "n": 14000 },
+    "SHRINKER_BEETLE_WEAK":       { "type": "normal", "avg_dmg": 3.8,  "death": 0.005, "avg_turns": 2.0, "n": 16000 },
+
+    "KNIGHTS_ELITE":              { "type": "elite",  "avg_dmg": 22.3, "death": 0.128, "avg_turns": 5.1, "n": 8000  },
+    "BYGONE_EFFIGY_ELITE":        { "type": "elite",  "avg_dmg": 18.1, "death": 0.082, "avg_turns": 4.3, "n": 6500  },
+    "DECIMILLIPEDE_ELITE":        { "type": "elite",  "avg_dmg": 25.6, "death": 0.155, "avg_turns": 5.8, "n": 5000  },
+    "ENTOMANCER_ELITE":           { "type": "elite",  "avg_dmg": 20.0, "death": 0.100, "avg_turns": 4.8, "n": 7000  },
+    "TERROR_EEL_ELITE":           { "type": "elite",  "avg_dmg": 28.4, "death": 0.180, "avg_turns": 6.2, "n": 4000  },
+    "SOUL_NEXUS_ELITE":           { "type": "elite",  "avg_dmg": 24.0, "death": 0.140, "avg_turns": 5.5, "n": 5500  },
+
+    "KAISER_CRAB_BOSS":           { "type": "boss",   "avg_dmg": 35.7, "death": 0.185, "avg_turns": 8.4, "n": 4000  },
+    "DOORMAKER_BOSS":             { "type": "boss",   "avg_dmg": 30.2, "death": 0.150, "avg_turns": 7.5, "n": 4500  },
+    "CEREMONIAL_BEAST_BOSS":      { "type": "boss",   "avg_dmg": 40.5, "death": 0.220, "avg_turns": 9.1, "n": 3500  },
+    "THE_INSATIABLE_BOSS":        { "type": "boss",   "avg_dmg": 38.0, "death": 0.200, "avg_turns": 8.8, "n": 3800  },
+    "VANTOM_BOSS":                { "type": "boss",   "avg_dmg": 33.3, "death": 0.170, "avg_turns": 7.8, "n": 4200  },
+    "KNOWLEDGE_DEMON_BOSS":       { "type": "boss",   "avg_dmg": 42.0, "death": 0.250, "avg_turns": 9.5, "n": 3000  },
+
+    "monster":                    { "type": "normal", "avg_dmg": 9.8,  "death": 0.032, "avg_turns": 3.3, "n": 120000 },
+    "elite":                      { "type": "elite",  "avg_dmg": 22.5, "death": 0.125, "avg_turns": 5.2, "n": 36000  },
+    "boss":                       { "type": "boss",   "avg_dmg": 36.0, "death": 0.195, "avg_turns": 8.5, "n": 23000  }
+  }
+}

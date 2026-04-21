@@ -1,0 +1,117 @@
+services:
+  # ── API Server ────────────────────────────────────────────
+  api:
+    build: .
+    container_name: sts2stats-api
+    ports:
+      - "5080:8080"
+    environment:
+      DATABASE_URL: "postgresql://sts2stats:${DB_PASSWORD:?DB_PASSWORD env var must be set}@db:5432/sts2stats"
+      REDIS_URL: "redis://redis:6379/0"
+      LOG_LEVEL: "info"
+      PRECOMPUTE_INTERVAL_MINUTES: "10"
+      RATE_LIMIT_UPLOAD: "${RATE_LIMIT_UPLOAD:-10/minute}"
+      RATE_LIMIT_QUERY: "${RATE_LIMIT_QUERY:-60/minute}"
+      BLOCKED_MOD_VERSIONS: "${BLOCKED_MOD_VERSIONS:-}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── PostgreSQL ────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: sts2stats-db
+    environment:
+      POSTGRES_DB: sts2stats
+      POSTGRES_USER: sts2stats
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD env var must be set}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Schema + migrations (alphabetical order = apply order on first init).
+      # NOTE: /docker-entrypoint-initdb.d/* only runs when pgdata is empty.
+      # For existing DBs, apply new migrations manually:
+      #   docker compose exec -T db psql -U sts2stats -d sts2stats -f /docker-entrypoint-initdb.d/<file>.sql
+      - ./sql/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./sql/002_run_hash.sql:/docker-entrypoint-initdb.d/002_run_hash.sql:ro
+      - ./sql/003_combo_events.sql:/docker-entrypoint-initdb.d/003_combo_events.sql:ro
+      - ./sql/003_defense_fields.sql:/docker-entrypoint-initdb.d/003_defense_fields.sql:ro
+      - ./sql/004_final_deck_and_shop_offerings.sql:/docker-entrypoint-initdb.d/004_final_deck_and_shop_offerings.sql:ro
+      - ./sql/005_contribution_v5_fields.sql:/docker-entrypoint-initdb.d/005_contribution_v5_fields.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"   # Only expose to localhost
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sts2stats -d sts2stats"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    shm_size: 256mb
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c effective_cache_size=512MB
+        -c work_mem=16MB
+        -c maintenance_work_mem=128MB
+        -c max_connections=100
+        -c log_min_duration_statement=500
+        -c log_statement=none
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: sts2stats-redis
+    command: >
+      redis-server
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --save 60 100
+        --loglevel warning
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:6379:6379"   # Only expose to localhost
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Nginx (HTTPS termination) ─────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: sts2stats-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ── Certbot (SSL certificate renewal) ────────────────────
+  certbot:
+    image: certbot/certbot
+    container_name: sts2stats-certbot
+    volumes:
+      - certbot-www:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    # Run renewal check every 12 hours via entrypoint
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
+volumes:
+  pgdata:
+  redisdata:
+  certbot-www:
+  certbot-certs:

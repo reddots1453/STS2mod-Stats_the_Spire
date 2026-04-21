@@ -1,0 +1,26 @@
+# ── .NET build artifacts ────────────────────────────────────
+**/bin/
+**/obj/
+*.pdb
+*.user
+
+# ── Environment / secrets ───────────────────────────────────
+.env
+!.env.example
+
+# ── Python build artifacts ──────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Editor / OS ─────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# ── Backups / scratch ───────────────────────────────────────
+*.bak
+*.tmp

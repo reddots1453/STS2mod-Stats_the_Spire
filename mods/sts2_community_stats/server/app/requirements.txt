@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+asyncpg==0.30.0
+redis[hiredis]==5.2.1
+pydantic==2.10.4
+slowapi==0.1.9
+python-dotenv==1.0.1
+orjson==3.10.13
+apscheduler==3.10.4

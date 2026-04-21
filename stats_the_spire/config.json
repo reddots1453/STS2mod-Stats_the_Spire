@@ -1,0 +1,6 @@
+{
+  "api_base_url": "http://64.176.85.164/v1",
+  "allow_http": true,
+  "query_timeout_ms": 10000,
+  "upload_timeout_ms": 30000
+}
