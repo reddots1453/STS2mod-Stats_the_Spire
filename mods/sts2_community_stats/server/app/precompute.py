@@ -31,23 +31,25 @@ async def precompute_all() -> int:
         return 0
 
     count = 0
-    for ver in versions:
-        for char in config.CHARACTERS:
-            for lo, hi in config.ASC_RANGES:
-                try:
-                    bundle = await compute_bulk_stats(pool, char, ver, lo, hi)
-                    key = bulk_key(char, f"{lo}-{hi}", ver)
-                    json_bytes = orjson.dumps(bundle.model_dump())
-                    await redis.setex(key, config.CACHE_TTL_SECONDS, json_bytes)
-                    count += 1
-                except Exception:
-                    logger.exception(
-                        "Failed to precompute %s asc%d-%d ver=%s", char, lo, hi, ver
-                    )
+    for branch in config.BRANCHES:
+        for ver in versions:
+            for char in config.CHARACTERS:
+                for lo, hi in config.ASC_RANGES:
+                    try:
+                        bundle = await compute_bulk_stats(pool, char, ver, lo, hi, branch=branch)
+                        key = bulk_key(char, f"{lo}-{hi}", ver, branch=branch)
+                        json_bytes = orjson.dumps(bundle.model_dump())
+                        await redis.setex(key, config.CACHE_TTL_SECONDS, json_bytes)
+                        count += 1
+                    except Exception:
+                        logger.exception(
+                            "Failed to precompute %s asc%d-%d ver=%s br=%s",
+                            char, lo, hi, ver, branch,
+                        )
 
     elapsed = time.monotonic() - t0
     logger.info(
-        "Precompute complete: %d bundles in %.1fs (%d versions × %d chars × %d ranges)",
-        count, elapsed, len(versions), len(config.CHARACTERS), len(config.ASC_RANGES),
+        "Precompute complete: %d bundles in %.1fs (%d branches × %d versions × %d chars × %d ranges)",
+        count, elapsed, len(config.BRANCHES), len(versions), len(config.CHARACTERS), len(config.ASC_RANGES),
     )
     return count

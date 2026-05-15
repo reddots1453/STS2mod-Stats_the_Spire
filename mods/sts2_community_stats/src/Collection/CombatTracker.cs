@@ -34,6 +34,13 @@ public sealed class CombatTracker
     private static readonly AsyncLocal<string?> _activePotionIdAL = new();
     private static readonly AsyncLocal<string?> _activePowerSourceIdAL = new();
     private static readonly AsyncLocal<string?> _activePowerSourceTypeAL = new();
+    // 4.18 fix: also remember the power id itself (e.g. "POISON_POWER") so
+    // OnDamageDealt's indirect-damage path can ask for ALL recorded sources
+    // and split the tick proportionally. The single _activePowerSourceId
+    // above is only the first source — without this companion field, a
+    // multi-application Poison would credit the entire tick to whoever
+    // applied it first.
+    private static readonly AsyncLocal<string?> _activePowerIdAL = new();
     private static readonly AsyncLocal<string?> _pendingDrawSourceIdAL = new();
     private static readonly AsyncLocal<string?> _pendingDrawSourceTypeAL = new();
     // P2-3: N-count pending draw (CentennialPuzzle draws N cards from a single hook).
@@ -94,6 +101,11 @@ public sealed class CombatTracker
     {
         get => _activePowerSourceTypeAL.Value;
         set => _activePowerSourceTypeAL.Value = value;
+    }
+    private string? _activePowerId
+    {
+        get => _activePowerIdAL.Value;
+        set => _activePowerIdAL.Value = value;
     }
 
     // Track DamageResult objects already processed by DamageReceived,
@@ -156,6 +168,7 @@ public sealed class CombatTracker
 
     public IReadOnlyDictionary<string, ContributionAccum>? LastCombatData => _lastCombatData;
     public string LastEncounterId => _lastEncounterId;
+    public string? CurrentEncounterId => string.IsNullOrEmpty(_encounterId) ? null : _encounterId;
 
     // Public DPS accessors (PRD 3.7)
     public int TurnCount => _turnCount;
@@ -172,7 +185,9 @@ public sealed class CombatTracker
         // save+quit recovery (PRD §3.6.1).
         try
         {
-            Util.ContributionPersistence.SaveLiveState(BuildLiveSnapshot(combatInProgress: true));
+            var snap = BuildLiveSnapshot(combatInProgress: true);
+            Godot.GD.Print($"[StatsTheSpire] SaveLiveState: combatInProgress=true, runTotalEntries={snap.RunTotals?.Count ?? 0}, encounters={snap.Encounters?.Count ?? 0}, currentCombatEntries={snap.CurrentCombat?.Count ?? 0}");
+            Util.ContributionPersistence.SaveLiveState(snap);
         }
         catch (Exception ex)
         {
@@ -188,6 +203,7 @@ public sealed class CombatTracker
     /// </summary>
     public LiveContributionSnapshot BuildLiveSnapshot(bool combatInProgress)
     {
+        var agg = RunContributionAggregator.Instance;
         return new LiveContributionSnapshot
         {
             EncounterId = _encounterId ?? "",
@@ -200,8 +216,8 @@ public sealed class CombatTracker
             CurrentCombat = combatInProgress
                 ? new Dictionary<string, ContributionAccum>(_currentCombat)
                 : null,
-            RunTotals = new Dictionary<string, ContributionAccum>(
-                RunContributionAggregator.Instance.RunTotals),
+            RunTotals = new Dictionary<string, ContributionAccum>(agg.RunTotals),
+            Encounters = new List<RunContributionAggregator.EncounterRecord>(agg.Encounters),
         };
     }
 
@@ -235,6 +251,9 @@ public sealed class CombatTracker
 
         if (snap.RunTotals != null)
             RunContributionAggregator.Instance.HydrateRunTotals(snap.RunTotals);
+
+        if (snap.Encounters != null && snap.Encounters.Count > 0)
+            RunContributionAggregator.Instance.HydrateEncounters(snap.Encounters);
     }
 
     // ── Lifecycle ────────────────────────────────────────────
@@ -247,6 +266,7 @@ public sealed class CombatTracker
         _activePotionId = null;
         _activePowerSourceId = null;
         _activePowerSourceType = null;
+        _activePowerId = null;
         _encounterId = encounterId;
         _encounterType = encounterType;
         _damageTakenByPlayer = 0;
@@ -284,7 +304,9 @@ public sealed class CombatTracker
         // save+quit between combats keeps the run-totals tab populated.
         try
         {
-            Util.ContributionPersistence.SaveLiveState(BuildLiveSnapshot(combatInProgress: false));
+            var snap = BuildLiveSnapshot(combatInProgress: false);
+            Godot.GD.Print($"[StatsTheSpire] SaveLiveState post-combat: combatInProgress=false, runTotalEntries={snap.RunTotals?.Count ?? 0}, encounters={snap.Encounters?.Count ?? 0}");
+            Util.ContributionPersistence.SaveLiveState(snap);
         }
         catch { }
     }
@@ -358,6 +380,12 @@ public sealed class CombatTracker
 
     public void SetActivePowerSource(string powerId)
     {
+        // 4.18 fix: cache the raw powerId in addition to the resolved single
+        // source. OnDamageDealt's indirect path uses _activePowerId to ask
+        // ContributionMap for ALL recorded sources of this power and split
+        // the tick proportionally, restoring credit to every card that
+        // applied it (Poison from a Strike + Necronomicon stack, etc.).
+        _activePowerId = powerId;
         var source = ContributionMap.Instance.GetPowerSource(powerId);
         if (source != null)
         {
@@ -366,10 +394,27 @@ public sealed class CombatTracker
         }
     }
 
+    /// <summary>
+    /// Set the active power-source context for an enemy-side debuff hook
+    /// (Strangle, Poison, Slowed, etc) where the resolved source comes from
+    /// the per-enemy <c>_debuffLayers</c> table rather than the global
+    /// <c>_powerSources</c> map. <see cref="SetActivePowerSource"/> can't
+    /// see those entries because enemy debuffs don't pollute the global
+    /// table (Fix 3.1). Callers pass the FIFO head source they fetched via
+    /// <see cref="ContributionMap.GetDebuffHeadSource"/>.
+    /// </summary>
+    public void SetActivePowerSourceManual(string powerId, string sourceId, string sourceType)
+    {
+        _activePowerId = powerId;
+        _activePowerSourceId = sourceId;
+        _activePowerSourceType = sourceType;
+    }
+
     public void ClearActivePowerSource()
     {
         _activePowerSourceId = null;
         _activePowerSourceType = null;
+        _activePowerId = null;
     }
 
     /// <summary>Force-clear ALL context. Called between tests to prevent stale state.
@@ -386,6 +431,7 @@ public sealed class CombatTracker
         _activeRelicId = null;
         _activePowerSourceId = null;
         _activePowerSourceType = null;
+        _activePowerId = null;
         _pendingDrawSourceId = null;
         _pendingDrawSourceType = null;
         _pendingDrawRemainingAL.Value = null;
@@ -658,15 +704,14 @@ public sealed class CombatTracker
                 }
             }
 
-            // Focus contribution split: when orb is the source, split Focus bonus as ModifierDamage
-            var focusContrib = ContributionMap.Instance.PendingOrbFocusContrib;
-            if (focusContrib != null && focusContrib.Value.amount > 0)
+            // Orb value contributions (Focus + relics like Infused Core).
+            foreach (var c in ContributionMap.Instance.ConsumeOrbValueContribs())
             {
-                int focusAmount = Math.Min(focusContrib.Value.amount, directDamage);
-                if (focusAmount > 0)
+                int amount = Math.Min(c.amount, directDamage);
+                if (amount > 0)
                 {
-                    GetOrCreate(focusContrib.Value.sourceId, focusContrib.Value.sourceType).ModifierDamage += focusAmount;
-                    directDamage -= focusAmount;
+                    GetOrCreate(c.sourceId, c.sourceType).ModifierDamage += amount;
+                    directDamage -= amount;
                 }
             }
 
@@ -697,9 +742,69 @@ public sealed class CombatTracker
                 || (cardSourceId == null && _activePowerSourceId != null);
 
             if (isIndirect)
-                GetOrCreate(sourceId2, sourceType2).AttributedDamage += directDamage;
+            {
+                // PRD I1 — multi-source stack debuff (Poison/etc): split the
+                // tick by current per-source layer.Duration. Each existing
+                // stack contributes 1 damage to this tick, and AfterSetAmount's
+                // FIFO DecrementDebuffLayers ensures expired stacks no longer
+                // contribute on subsequent turns. _debuffLayers is keyed by
+                // (enemy_hash, powerId) so each enemy carries its own
+                // multi-source FIFO stack — the targetHash here is the
+                // self-damaged enemy.
+                //
+                // Orb-channelled damage skips this path: orb context already
+                // names the originating card uniquely (the channeling card).
+                // Player buff hooks (Rage / Juggernaut / etc) also fall
+                // through naturally — _debuffLayers won't have an entry for
+                // those power ids on the enemy, so fractions.Count==0 and we
+                // route through the existing single-source resolver.
+                bool distributed = false;
+                if (!hasOrbContext && _activePowerId != null && directDamage > 0)
+                {
+                    // Try debuff-layer fractions first (Poison, Doom — per-enemy stacks)
+                    var fractions = ContributionMap.Instance.GetDebuffSourceFractions(
+                        targetHash, _activePowerId);
+                    if (fractions.Count > 1)
+                    {
+                        int allocated = 0;
+                        for (int i = 0; i < fractions.Count; i++)
+                        {
+                            int share = (i == fractions.Count - 1)
+                                ? directDamage - allocated
+                                : (int)Math.Round(directDamage * fractions[i].Fraction);
+                            if (share > 0)
+                                GetOrCreate(fractions[i].SourceId, fractions[i].SourceType).AttributedDamage += share;
+                            allocated += share;
+                        }
+                        distributed = true;
+                    }
+
+                    // Fall back to global power-source distribution for player
+                    // buffs with multiple sources (Thorns: BronzeScales + Abrasion,
+                    // FlameBarrier from multiple relics/cards, etc.)
+                    if (!distributed)
+                    {
+                        var powerSources = ContributionMap.Instance.GetPowerSources(_activePowerId);
+                        if (powerSources != null && powerSources.Count > 1)
+                        {
+                            var dist = ContributionMap.Instance.DistributeByPowerSources(
+                                _activePowerId, directDamage);
+                            foreach (var (sid, stype, share) in dist)
+                            {
+                                if (share > 0)
+                                    GetOrCreate(sid, stype).AttributedDamage += share;
+                            }
+                            distributed = true;
+                        }
+                    }
+                }
+                if (!distributed)
+                    GetOrCreate(sourceId2, sourceType2).AttributedDamage += directDamage;
+            }
             else
+            {
                 GetOrCreate(sourceId2, sourceType2).DirectDamage += directDamage;
+            }
         }
 
         modifiers.Clear();
@@ -716,17 +821,29 @@ public sealed class CombatTracker
         int prevented = (int)Math.Round(actualDamage / weakMultiplier - actualDamage);
         if (prevented <= 0) return;
 
-        // H1: Use FIFO fractional attribution for multi-source Weak
-        var fractions = ContributionMap.Instance.GetDebuffSourceFractions(dealerHash, "WEAK_POWER");
-        if (fractions.Count > 0)
-        {
-            foreach (var (sourceId, sourceType, frac) in fractions)
-            {
-                int share = (int)Math.Round(prevented * frac);
-                if (share > 0)
-                    GetOrCreate(sourceId, sourceType).MitigatedByDebuff += share;
-            }
-        }
+        // PRD DEF-2c — FIFO head-source attribution: Weak is a boolean debuff
+        // (single 0.75x multiplier regardless of stack count), so the entire
+        // turn's mitigation belongs to whichever source's layer is at the
+        // queue head. Pro-rating by stack count would credit a later applier
+        // for damage Weak prevented before that source even existed.
+        var head = ContributionMap.Instance.GetDebuffHeadSource(dealerHash, "WEAK_POWER");
+        if (head != null)
+            GetOrCreate(head.SourceId, head.SourceType).MitigatedByDebuff += prevented;
+    }
+
+    /// <summary>
+    /// 4.18 fix: attribute a pre-computed slice of prevented damage to a
+    /// specific debuff layer source. Used by AfterModifyDamage_Enemy when
+    /// iterating enemy-side debuff power modifiers — we pre-split the
+    /// `damage that would have been dealt without this modifier` by the
+    /// FIFO layer fractions and call this per slice. Keeps WEAK_POWER
+    /// mitigation on its separate OnWeakMitigation path while supporting
+    /// any other duration-based debuff (Slowed, etc.) on this unified path.
+    /// </summary>
+    public void OnDebuffPrevention(string sourceId, string sourceType, int amount)
+    {
+        if (amount <= 0 || string.IsNullOrEmpty(sourceId)) return;
+        GetOrCreate(sourceId, sourceType).MitigatedByDebuff += amount;
     }
 
     // ── Defense: Buffer / Intangible ────────────────────────
@@ -826,17 +943,15 @@ public sealed class CombatTracker
                 modifiers.Clear();
             }
 
-            // Focus contribution split for Frost orb: Focus bonus is treated as a
-            // modifier entry too, so it only credits when block is actually used.
-            var focusContrib = ContributionMap.Instance.PendingOrbFocusContrib;
-            if (focusContrib != null && focusContrib.Value.amount > 0)
+            // Orb value contributions (Focus + relics) for Frost orb block bonus.
+            foreach (var c in ContributionMap.Instance.ConsumeOrbValueContribs())
             {
-                int focusAmount = Math.Min(focusContrib.Value.amount, amount);
-                if (focusAmount > 0)
+                int amt = Math.Min(c.amount, amount);
+                if (amt > 0)
                 {
                     modifierList ??= new List<(string, string, int)>();
-                    modifierList.Add((focusContrib.Value.sourceId, focusContrib.Value.sourceType, focusAmount));
-                    modifierTotal += focusAmount;
+                    modifierList.Add((c.sourceId, c.sourceType, amt));
+                    modifierTotal += amt;
                 }
             }
 
@@ -1326,41 +1441,40 @@ public sealed class CombatTracker
     /// </summary>
     public void FlushForgeSubBars()
     {
-        if (_forgeLog.Count == 0) return;
-
-        // Aggregate by sourceId
-        var aggregated = new Dictionary<string, (string sourceType, int count, int totalAmount)>();
-        foreach (var (srcId, srcType, amt) in _forgeLog)
+        // Aggregate forge sources if any. Forge log may be empty on replay
+        // (Sword Sage / Replay mechanic) — still write base damage below.
+        if (_forgeLog.Count > 0)
         {
-            if (aggregated.TryGetValue(srcId, out var existing))
-                aggregated[srcId] = (srcType, existing.count + 1, existing.totalAmount + amt);
-            else
-                aggregated[srcId] = (srcType, 1, amt);
+            var aggregated = new Dictionary<string, (string sourceType, int count, int totalAmount)>();
+            foreach (var (srcId, srcType, amt) in _forgeLog)
+            {
+                if (aggregated.TryGetValue(srcId, out var existing))
+                    aggregated[srcId] = (srcType, existing.count + 1, existing.totalAmount + amt);
+                else
+                    aggregated[srcId] = (srcType, 1, amt);
+            }
+
+            foreach (var (rawSrcId, (srcType, count, totalAmt)) in aggregated)
+            {
+                string srcId = rawSrcId;
+                if (srcType == "power" && srcId.EndsWith("_POWER", StringComparison.Ordinal))
+                    srcId = srcId.Substring(0, srcId.Length - "_POWER".Length);
+                string key = $"FORGE:{srcId}";
+                var accum = GetOrCreate(key, srcType);
+                accum.OriginSourceId = "SOVEREIGN_BLADE";
+                accum.DirectDamage += totalAmt;
+                accum.TimesPlayed += count;
+            }
         }
 
-        // Write sub-bar entries: "FORGE:SOURCE_ID" with OriginSourceId = "SOVEREIGN_BLADE"
-        // P2-2: Normalize Power sources — FurnacePower's Id.Entry is "FURNACE_POWER"
-        // but tests (and users) expect the sub-bar key "FORGE:FURNACE" / "FORGE:BULWARK"
-        // (the variant name, not the power suffix). Strip the trailing "_POWER" so
-        // the format is FORGE:<VARIANT>.
-        foreach (var (rawSrcId, (srcType, count, totalAmt)) in aggregated)
-        {
-            string srcId = rawSrcId;
-            if (srcType == "power" && srcId.EndsWith("_POWER", StringComparison.Ordinal))
-                srcId = srcId.Substring(0, srcId.Length - "_POWER".Length);
-            string key = $"FORGE:{srcId}";
-            var accum = GetOrCreate(key, srcType);
-            accum.OriginSourceId = "SOVEREIGN_BLADE";
-            accum.DirectDamage += totalAmt;
-            accum.TimesPlayed += count;
-        }
-
-        // Also write base damage entry (SovereignBlade starts at 10)
+        // Base damage entry — SovereignBlade starts at 10. Uses += so
+        // Replay mechanics (Sword Sage) accumulate correctly across
+        // multiple OnPlay calls within the same combat.
         const int baseDamage = 10;
         var baseAccum = GetOrCreate("FORGE:BASE", "card");
         baseAccum.OriginSourceId = "SOVEREIGN_BLADE";
-        baseAccum.DirectDamage = baseDamage; // fixed, not additive
-        baseAccum.TimesPlayed = 1;
+        baseAccum.DirectDamage += baseDamage;
+        baseAccum.TimesPlayed += 1;
     }
 
     // ── Healing ──────────────────────────────────────────────

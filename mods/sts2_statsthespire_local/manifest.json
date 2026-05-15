@@ -1,0 +1,11 @@
+{
+  "id": "sts2_statsthespire_local",
+  "name": "Stats the Spire",
+  "author": "CommunityStatsDev",
+  "description": "Per-combat contribution charts, career stats, run history analysis, monster intent state machine, and in-run probability indicators — all local, no network.",
+  "version": "1.3",
+  "has_dll": true,
+  "has_pck": false,
+  "affects_gameplay": false,
+  "dependencies": []
+}

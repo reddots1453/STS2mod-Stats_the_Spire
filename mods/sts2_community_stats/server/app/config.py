@@ -22,6 +22,7 @@ DB_MAX_POOL: int = int(os.getenv("DB_MAX_POOL", "10"))
 
 # ── Redis ───────────────────────────────────────────────────
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_PASSWORD: str | None = os.getenv("REDIS_PASSWORD") or None
 CACHE_TTL_SECONDS: int = int(os.getenv("CACHE_TTL_SECONDS", "900"))  # 15 minutes
 
 # ── Precompute ──────────────────────────────────────────────
@@ -40,6 +41,9 @@ ASC_RANGES: list[tuple[int, int]] = [
     (0, 4), (5, 9), (10, 14), (15, 19), (20, 20),
 ]
 
+# ── Branch dimension ─────────────────────────────────────────
+BRANCHES: list[str] = ["release", "beta"]
+
 # ── Security ────────────────────────────────────────────────
 BLOCKED_MOD_VERSIONS: set[str] = set(
     os.getenv("BLOCKED_MOD_VERSIONS", "").split(",")
@@ -47,6 +51,12 @@ BLOCKED_MOD_VERSIONS: set[str] = set(
 
 RATE_LIMIT_UPLOAD: str = os.getenv("RATE_LIMIT_UPLOAD", "10/minute")
 RATE_LIMIT_QUERY: str = os.getenv("RATE_LIMIT_QUERY", "60/minute")
+RATE_LIMIT_HEALTH: str = os.getenv("RATE_LIMIT_HEALTH", "30/minute")
+
+# Max request body size in bytes (default 1 MB, matches nginx client_max_body_size).
+# Defense-in-depth: if someone bypasses nginx (e.g. direct container access),
+# FastAPI still rejects oversized payloads rather than streaming them to disk.
+MAX_REQUEST_BODY_SIZE: int = int(os.getenv("MAX_REQUEST_BODY_SIZE", "1048576"))
 
 # ── Server ──────────────────────────────────────────────────
 HOST: str = os.getenv("HOST", "0.0.0.0")

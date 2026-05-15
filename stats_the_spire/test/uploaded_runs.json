@@ -1,0 +1,10 @@
+[
+  {
+    "received_at": "2026-04-01T09:19:12.631114",
+    "payload": {
+      "character": "Silent",
+      "win": true,
+      "floor_reached": 55
+    }
+  }
+]

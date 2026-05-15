@@ -5,8 +5,12 @@ using CommunityStats.Util;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Merchant;
+using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rooms;
+using MegaCrit.Sts2.Core.Runs;
 
 namespace CommunityStats.Patches;
 
@@ -24,9 +28,132 @@ public static class ShopPatch
     private static readonly List<WeakReference<NMerchantCard>> _liveCards = new();
     private static readonly List<WeakReference<NMerchantRelic>> _liveRelics = new();
 
+    // ── Modal-overlay tracking (Round 16 v3) ───────────────
+    // The Z-index dampening in v2 wasn't enough: NCapstoneContainer (deck
+    // view, card library, relic collection, pause menu, settings) and
+    // NMapScreen render on top of the shop without setting NMerchantCard's
+    // own Visible to false, so the shop label — which lives under
+    // NMerchantCard — kept showing. Hook the two overlays' Open/Close
+    // signals and toggle every live label's Visible directly.
+    private static NCapstoneContainer? _hookedCapstone;
+    private static NMapScreen? _hookedMapScreen;
+
     public static void SubscribeRefresh()
     {
         StatsProvider.DataRefreshed += OnDataRefreshed;
+    }
+
+    /// <summary>
+    /// Lazily subscribe to the capstone-container Changed/CapstoneClosed
+    /// and map-screen Opened/Closed signals so we can hide our shop labels
+    /// the moment any modal overlay opens. Must be called from inside the
+    /// shop attach paths because the relevant nodes don't exist at mod
+    /// init (and are recreated when a new run starts).
+    /// </summary>
+    private static void EnsureNavSignalsHooked()
+    {
+        Safe.Run(() =>
+        {
+            // Capstone container: deck view, card library, relic collection,
+            // pause menu, settings, etc. all flow through this single node.
+            var capstone = NCapstoneContainer.Instance;
+            if (capstone != null && capstone != _hookedCapstone)
+            {
+                if (_hookedCapstone != null
+                    && GodotObject.IsInstanceValid(_hookedCapstone))
+                {
+                    try
+                    {
+                        _hookedCapstone.Changed -= UpdateLabelVisibility;
+                        _hookedCapstone.CapstoneClosed -= UpdateLabelVisibility;
+                    }
+                    catch { }
+                }
+                capstone.Changed += UpdateLabelVisibility;
+                capstone.CapstoneClosed += UpdateLabelVisibility;
+                _hookedCapstone = capstone;
+            }
+
+            // Map screen has its own Open/Close lifecycle independent of the
+            // capstone container.
+            var mapScreen = NRun.Instance?.GlobalUi?.MapScreen;
+            if (mapScreen != null && mapScreen != _hookedMapScreen)
+            {
+                if (_hookedMapScreen != null
+                    && GodotObject.IsInstanceValid(_hookedMapScreen))
+                {
+                    try
+                    {
+                        _hookedMapScreen.Opened -= UpdateLabelVisibility;
+                        _hookedMapScreen.Closed -= UpdateLabelVisibility;
+                    }
+                    catch { }
+                }
+                mapScreen.Opened += UpdateLabelVisibility;
+                mapScreen.Closed += UpdateLabelVisibility;
+                _hookedMapScreen = mapScreen;
+            }
+        });
+    }
+
+    /// <summary>True iff a capstone screen or the map screen is currently up.</summary>
+    private static bool IsAnyOverlayUp()
+    {
+        bool overlayUp = false;
+        try
+        {
+            if (_hookedCapstone != null
+                && GodotObject.IsInstanceValid(_hookedCapstone))
+                overlayUp |= _hookedCapstone.InUse;
+        }
+        catch { }
+        try
+        {
+            if (_hookedMapScreen != null
+                && GodotObject.IsInstanceValid(_hookedMapScreen))
+                overlayUp |= _hookedMapScreen.IsOpen;
+        }
+        catch { }
+        return overlayUp;
+    }
+
+    /// <summary>
+    /// Hide every live shop label when any modal overlay is up; show again
+    /// when none is. Run from the capstone Changed/CapstoneClosed and
+    /// map-screen Opened/Closed handlers.
+    /// </summary>
+    private static void UpdateLabelVisibility()
+    {
+        Safe.Run(() =>
+        {
+            bool overlayUp = IsAnyOverlayUp();
+
+            void Toggle(Node parent)
+            {
+                foreach (var child in parent.GetChildren())
+                {
+                    if (child is Label lbl && lbl.HasMeta(StatsLabelMeta))
+                        lbl.Visible = !overlayUp;
+                }
+            }
+
+            for (int i = _liveCards.Count - 1; i >= 0; i--)
+            {
+                if (_liveCards[i].TryGetTarget(out var card)
+                    && GodotObject.IsInstanceValid(card))
+                    Toggle(card);
+                else
+                    _liveCards.RemoveAt(i);
+            }
+            for (int i = _liveRelics.Count - 1; i >= 0; i--)
+            {
+                if (_liveRelics[i].TryGetTarget(out var relic)
+                    && GodotObject.IsInstanceValid(relic))
+                    Toggle(relic);
+                else
+                    _liveRelics.RemoveAt(i);
+            }
+        });
     }
 
     private static void OnDataRefreshed()
@@ -222,6 +349,7 @@ public static class ShopPatch
         Safe.Run(() =>
         {
             TrackCard(slot);
+            EnsureNavSignalsHooked();
 
             if (slot.Entry is not MerchantCardEntry cardEntry)
             {
@@ -271,9 +399,18 @@ public static class ShopPatch
             label.Position = new Vector2(0, 200);
             label.Size = new Vector2(160, 30);
             label.MouseFilter = Control.MouseFilterEnum.Ignore;
-            label.ZIndex = 100;
+            // ZIndex 0 = same render layer as the shop card itself.
+            // Cross-CanvasLayer overlays (deck/map/settings) are handled
+            // by UpdateLabelVisibility hiding the label when those overlays
+            // are open. Within the same CanvasLayer, ZIndex 0 ensures the
+            // label never floats above card-detail previews or removal
+            // confirmation dialogs that the game paints on top of the shop.
+            label.ZIndex = 0;
             slot.AddChild(label);
-            label.Visible = true;
+            // Defer visibility decision to UpdateLabelVisibility so a label
+            // attached while a capstone overlay is already open doesn't pop
+            // briefly into view before the next overlay event toggles it.
+            label.Visible = !IsAnyOverlayUp();
             Safe.Info($"[ShopBuyRate] card={cardId} attached ({pathTag}) slotSize={slot.Size}");
         });
     }
@@ -295,6 +432,7 @@ public static class ShopPatch
         Safe.Run(() =>
         {
             TrackRelic(slot);
+            EnsureNavSignalsHooked();
 
             if (slot.Entry is not MerchantRelicEntry relicEntry)
             {
@@ -333,7 +471,11 @@ public static class ShopPatch
 
             label.SetMeta(StatsLabelMeta, true);
             slot.AddChild(label);
-            label.ZIndex = 100;
+            // ZIndex 0 = same render layer as the shop relic itself.
+            // Cross-CanvasLayer overlays (deck/map/settings) are handled
+            // by UpdateLabelVisibility; within the same CanvasLayer the
+            // label stays below card-detail previews and removal dialogs.
+            label.ZIndex = 0;
             label.MouseFilter = Control.MouseFilterEnum.Ignore;
             // Relic box: wider to fit fontSize=14 text "购买 12.3%".
             label.AnchorLeft = 1f;
@@ -344,7 +486,7 @@ public static class ShopPatch
             label.OffsetTop = -24;
             label.OffsetRight = -4;
             label.OffsetBottom = -4;
-            label.Visible = true;
+            label.Visible = !IsAnyOverlayUp();
             Safe.Info($"[ShopBuyRate] relic={relicId} attached ({pathTag}) slotSize={slot.Size}");
         });
     }

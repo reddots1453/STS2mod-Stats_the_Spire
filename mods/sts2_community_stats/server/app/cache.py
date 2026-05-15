@@ -13,7 +13,10 @@ async def init_redis() -> aioredis.Redis:
     global _redis
     if _redis is None:
         logger.info("Connecting to Redis: %s", config.REDIS_URL)
-        _redis = aioredis.from_url(config.REDIS_URL, decode_responses=True)
+        kwargs: dict = {"decode_responses": True}
+        if config.REDIS_PASSWORD:
+            kwargs["password"] = config.REDIS_PASSWORD
+        _redis = aioredis.from_url(config.REDIS_URL, **kwargs)
         await _redis.ping()
         logger.info("Redis connected")
     return _redis
@@ -33,8 +36,20 @@ def get_redis() -> aioredis.Redis:
 
 # ── Cache key helpers ───────────────────────────────────────
 
-def bulk_key(character: str, asc_range: str, version: str) -> str:
-    return f"bulk:{character}:{asc_range}:{version}"
+def bulk_key(
+    character: str, asc_range: str, version: str, min_wr: float = 0.0,
+    branch: str = "all",
+) -> str:
+    # min_wr == 0 keeps the original key layout so precomputed bundles and
+    # pre-existing cache entries continue to hit. Any non-zero filter writes
+    # under a distinct key — otherwise 30% and 50% requests would alias onto
+    # the unfiltered bundle and the F9 slider would appear to do nothing.
+    base = f"bulk:{character}:{asc_range}:{version}"
+    if branch != "all":
+        base += f":br{branch}"
+    if min_wr > 0:
+        base += f":wr{min_wr:.2f}"
+    return base
 
 
 def map_asc_range(min_asc: int, max_asc: int) -> str:

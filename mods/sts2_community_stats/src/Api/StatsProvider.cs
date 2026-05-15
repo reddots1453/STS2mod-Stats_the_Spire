@@ -17,6 +17,14 @@ public sealed class StatsProvider
     private FilterSettings? _bundleFilter;
     private volatile bool _isPreloading;
 
+    /// <summary>
+    /// Tracks where the current bundle came from so UI layers can show
+    /// appropriate indicators (e.g. "test data" vs live server data).
+    /// </summary>
+    public enum BundleSource { None, Server, DiskCache, TestData }
+
+    public BundleSource CurrentBundleSource { get; private set; } = BundleSource.None;
+
     public bool IsPreloading => _isPreloading;
     public bool HasBundle => _bundle != null || ModConfig.CurrentFilter.MyDataOnly;
     public int TotalRunCount => ModConfig.CurrentFilter.MyDataOnly
@@ -57,6 +65,7 @@ public sealed class StatsProvider
         if (testBundle != null)
         {
             _bundle = testBundle;
+            CurrentBundleSource = BundleSource.TestData;
             Safe.Info($"Loaded bundled test data: {testBundle.Cards.Count} cards, {testBundle.Relics.Count} relics, {testBundle.Events.Count} events");
         }
     }
@@ -79,6 +88,7 @@ public sealed class StatsProvider
             if (bundle != null)
             {
                 _bundle = bundle;
+                CurrentBundleSource = BundleSource.Server;
                 StatsCache.Instance.Set(diskKey, bundle);
                 StatsCache.Instance.WriteDisk(diskKey, bundle);
                 Safe.Info($"Preloaded bulk stats for {character} ({_bundle.Cards.Count} cards, {_bundle.Relics.Count} relics, {_bundle.Events.Count} events, {_bundle.Encounters.Count} encounters)");
@@ -98,6 +108,7 @@ public sealed class StatsProvider
         if (cached != null)
         {
             _bundle = cached;
+            CurrentBundleSource = BundleSource.DiskCache;
             Safe.Info($"Preload fell back to disk cache for {character}");
             _isPreloading = false;
             return;
@@ -108,6 +119,7 @@ public sealed class StatsProvider
         if (testBundle != null)
         {
             _bundle = testBundle;
+            CurrentBundleSource = BundleSource.TestData;
             Safe.Info($"Preload fell back to bundled test data ({testBundle.Cards.Count} cards, {testBundle.Relics.Count} relics)");
         }
         else
@@ -159,6 +171,7 @@ public sealed class StatsProvider
         _bundle = null;
         _bundleFilter = null;
         _isPreloading = false;
+        CurrentBundleSource = BundleSource.None;
     }
 
     // ── Card Stats ──────────────────────────────────────────
@@ -182,7 +195,13 @@ public sealed class StatsProvider
         }
 
         if (_bundle?.Cards.TryGetValue(cardId, out var stats) == true)
+        {
+            if (stats.SampleSize > _bundle.TotalRuns && _bundle.TotalRuns > 0)
+            {
+                Safe.Warn($"[DataCheck] card {cardId} sample={stats.SampleSize} > totalRuns={_bundle.TotalRuns} — bundle source={CurrentBundleSource}");
+            }
             return stats;
+        }
         return null;
     }
 
@@ -247,7 +266,13 @@ public sealed class StatsProvider
         }
 
         if (_bundle?.Relics.TryGetValue(relicId, out var stats) == true)
+        {
+            if (stats.SampleSize > _bundle.TotalRuns && _bundle.TotalRuns > 0)
+            {
+                Safe.Warn($"[DataCheck] relic {relicId} sample={stats.SampleSize} > totalRuns={_bundle.TotalRuns} — bundle source={CurrentBundleSource}");
+            }
             return stats;
+        }
         return null;
     }
 

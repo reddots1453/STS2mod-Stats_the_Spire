@@ -69,12 +69,84 @@ public sealed class RunContributionAggregator
     /// <summary>
     /// Restore run totals from a save+quit snapshot. Round 8 §3.6.1.
     /// Replaces (not merges) the in-memory totals with the supplied dict.
+    /// Does nothing when totals is empty — an empty snapshot should never
+    /// wipe data that is already in memory (defense against corrupted or
+    /// mid-first-combat _live.json files).
     /// </summary>
     public void HydrateRunTotals(IReadOnlyDictionary<string, ContributionAccum> totals)
     {
+        if (totals.Count == 0) return;
         _runTotals.Clear();
         foreach (var (k, v) in totals) _runTotals[k] = v;
     }
+
+    /// <summary>
+    /// Restore per-encounter records from a save+quit snapshot.
+    /// Without this, TotalRunTurns is 0 after SL → DPS shows "—" or
+    /// inflates wildly after the first post-load combat.
+    /// </summary>
+    public void HydrateEncounters(IReadOnlyList<EncounterRecord> encounters)
+    {
+        _encounters.Clear();
+        _encounters.AddRange(encounters);
+    }
+
+    /// <summary>
+    /// Merge disk-reassembled totals into in-memory totals. For each
+    /// contribution key, takes the MAX of each numeric field so that
+    /// missing-in-memory fights are filled in without overwriting
+    /// live data that may have progressed further.
+    /// </summary>
+    public void MergeMaxFrom(IReadOnlyDictionary<string, ContributionAccum> diskTotals)
+    {
+        foreach (var (key, disk) in diskTotals)
+        {
+            if (!_runTotals.TryGetValue(key, out var mem))
+            {
+                _runTotals[key] = Clone(disk);
+                continue;
+            }
+            mem.TimesPlayed          = Math.Max(mem.TimesPlayed, disk.TimesPlayed);
+            mem.DirectDamage         = Math.Max(mem.DirectDamage, disk.DirectDamage);
+            mem.AttributedDamage     = Math.Max(mem.AttributedDamage, disk.AttributedDamage);
+            mem.ModifierDamage       = Math.Max(mem.ModifierDamage, disk.ModifierDamage);
+            mem.UpgradeDamage        = Math.Max(mem.UpgradeDamage, disk.UpgradeDamage);
+            mem.EffectiveBlock       = Math.Max(mem.EffectiveBlock, disk.EffectiveBlock);
+            mem.ModifierBlock        = Math.Max(mem.ModifierBlock, disk.ModifierBlock);
+            mem.UpgradeBlock         = Math.Max(mem.UpgradeBlock, disk.UpgradeBlock);
+            mem.MitigatedByDebuff    = Math.Max(mem.MitigatedByDebuff, disk.MitigatedByDebuff);
+            mem.MitigatedByBuff      = Math.Max(mem.MitigatedByBuff, disk.MitigatedByBuff);
+            mem.MitigatedByStrReduction = Math.Max(mem.MitigatedByStrReduction, disk.MitigatedByStrReduction);
+            mem.SelfDamage           = Math.Max(mem.SelfDamage, disk.SelfDamage);
+            mem.CardsDrawn           = Math.Max(mem.CardsDrawn, disk.CardsDrawn);
+            mem.EnergyGained         = Math.Max(mem.EnergyGained, disk.EnergyGained);
+            mem.HpHealed             = Math.Max(mem.HpHealed, disk.HpHealed);
+            mem.StarsContribution    = Math.Max(mem.StarsContribution, disk.StarsContribution);
+        }
+    }
+
+    private static ContributionAccum Clone(ContributionAccum src) => new()
+    {
+        SourceId                = src.SourceId,
+        SourceType              = src.SourceType,
+        TimesPlayed             = src.TimesPlayed,
+        DirectDamage            = src.DirectDamage,
+        AttributedDamage        = src.AttributedDamage,
+        ModifierDamage          = src.ModifierDamage,
+        UpgradeDamage           = src.UpgradeDamage,
+        EffectiveBlock          = src.EffectiveBlock,
+        ModifierBlock           = src.ModifierBlock,
+        UpgradeBlock            = src.UpgradeBlock,
+        MitigatedByDebuff       = src.MitigatedByDebuff,
+        MitigatedByBuff         = src.MitigatedByBuff,
+        MitigatedByStrReduction = src.MitigatedByStrReduction,
+        SelfDamage              = src.SelfDamage,
+        CardsDrawn              = src.CardsDrawn,
+        EnergyGained            = src.EnergyGained,
+        HpHealed                = src.HpHealed,
+        StarsContribution       = src.StarsContribution,
+        OriginSourceId          = src.OriginSourceId,
+    };
 
     /// <summary>
     /// Adds healing directly to run totals (for healing that occurs outside combat,

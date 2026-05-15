@@ -3,7 +3,7 @@
   "name": "Stats the Spire",
   "author": "CommunityStatsDev",
   "description": "Community-shared card pick/win rates, relic win rates, event choice stats, shop buy rates, combat danger/death rates, and per-combat contribution charts.",
-  "version": "0.13.1",
+  "version": "0.16.2",
   "has_dll": true,
   "has_pck": false,
   "affects_gameplay": false,

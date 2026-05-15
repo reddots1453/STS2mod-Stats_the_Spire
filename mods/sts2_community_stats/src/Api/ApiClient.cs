@@ -10,7 +10,9 @@ namespace CommunityStats.Api;
 
 /// <summary>
 /// HttpClient wrapper for all server communication.
-/// Handles upload, bulk/on-demand queries, retries, and offline fallback.
+/// All traffic is forced over HTTPS. The AllowHttp config flag exists
+/// as a GFW workaround (SNI-blocking of some domains); when enabled,
+/// an HTTP base URL is used as-is instead of being upgraded.
 /// </summary>
 public sealed class ApiClient : IDisposable
 {
@@ -26,20 +28,14 @@ public sealed class ApiClient : IDisposable
     private ApiClient()
     {
         // BaseAddress MUST end with '/' for relative URL resolution to work correctly.
-        // Without trailing slash, HttpClient treats paths starting without '/' as
-        // relative to the parent, and paths with '/' as absolute from host root.
         var baseUrl = ModConfig.ApiBaseUrl.TrimEnd('/') + "/";
 
-        // Security: refuse HTTP unless config.json explicitly opts in via
-        // "allow_http": true. This prevents accidental plaintext traffic
-        // when the URL default or config.json is misconfigured. The
-        // allow_http flag exists as a conscious GFW workaround for users
-        // who cannot reach the HTTPS endpoint due to SNI blocking.
-        if (baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-            && !ModConfig.AllowHttp)
+        // Force HTTPS unless user explicitly opted into HTTP (GFW workaround).
+        if (!ModConfig.AllowHttp
+            && baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
         {
-            Safe.Warn($"[ApiClient] Refusing HTTP base URL — set \"allow_http\": true in config.json to override. URL: {baseUrl}");
             baseUrl = baseUrl.Replace("http://", "https://");
+            Safe.Warn($"[ApiClient] Upgraded base URL to HTTPS: {baseUrl}");
         }
 
         _queryClient = new HttpClient
@@ -50,6 +46,7 @@ public sealed class ApiClient : IDisposable
         _queryClient.DefaultRequestHeaders.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json"));
         _queryClient.DefaultRequestHeaders.Add("X-Mod-Version", ModConfig.ModVersion);
+        _queryClient.DefaultRequestHeaders.Add("User-Agent", $"StatsTheSpire/{ModConfig.ModVersion}");
 
         _uploadClient = new HttpClient
         {
@@ -57,6 +54,7 @@ public sealed class ApiClient : IDisposable
             Timeout = TimeSpan.FromMilliseconds(ModConfig.UploadTimeoutMs)
         };
         _uploadClient.DefaultRequestHeaders.Add("X-Mod-Version", ModConfig.ModVersion);
+        _uploadClient.DefaultRequestHeaders.Add("User-Agent", $"StatsTheSpire/{ModConfig.ModVersion}");
     }
 
     // ── Upload ──────────────────────────────────────────────
@@ -135,6 +133,7 @@ public sealed class ApiClient : IDisposable
     public async Task<BulkStatsBundle?> GetBulkStatsAsync(string character, FilterSettings filter)
     {
         var version = VersionManager.GetEffectiveVersion(filter);
+        var branch = BranchManager.GetEffectiveBranch(filter);
         // filter.ToQueryString() already emits char= from ResolveCharacter(); strip
         // it so we don't send the parameter twice (server takes the first, but some
         // intermediaries reject the dup).
@@ -142,10 +141,12 @@ public sealed class ApiClient : IDisposable
         var aux = qs.Length > 0 ? qs[1..] : "";
         var auxParts = aux.Length > 0
             ? aux.Split('&').Where(p => !p.StartsWith("char=", StringComparison.Ordinal)
-                                     && !p.StartsWith("ver=", StringComparison.Ordinal))
+                                     && !p.StartsWith("ver=", StringComparison.Ordinal)
+                                     && !p.StartsWith("branch=", StringComparison.Ordinal))
             : System.Array.Empty<string>();
         var auxJoined = string.Join("&", auxParts);
         var url = $"stats/bulk?char={Uri.EscapeDataString(character)}&ver={Uri.EscapeDataString(version)}"
+                + $"&branch={Uri.EscapeDataString(branch)}"
                 + (auxJoined.Length > 0 ? "&" + auxJoined : "");
 
         return await GetAsync<BulkStatsBundle>(url);

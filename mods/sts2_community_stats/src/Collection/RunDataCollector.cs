@@ -158,12 +158,16 @@ public static class RunDataCollector
             var seed = run?.SerializableRng?.Seed;
             if (!string.IsNullOrEmpty(seed))
             {
-                // Round 14 v5+ post-test fix: save+quit+resume between combats
-                // can clear in-memory run totals (OnRunStart → Reset, live.json
-                // hydration is best-effort). Every combat end DOES write a
-                // per-combat snapshot to disk, so reassemble the run totals
-                // from those authoritative files before serializing.
-                ContributionPersistence.AssembleAndHydrateRunTotals(seed!);
+                // Safety net: always reassemble from per-combat disk files
+                // and merge-max with in-memory totals. If live-state hydrate
+                // succeeded, the disk data is a subset (no harm). If hydrate
+                // failed (e.g. GetActiveSeed returned null during SL resume),
+                // the disk assembly fills in the missing pre-save combats.
+                // MergeMaxFrom takes the higher value per field so live data
+                // (which may have progressed further) is never overwritten.
+                var diskTotals = ContributionPersistence.AssembleFromCombats(seed!);
+                if (diskTotals != null && diskTotals.Count > 0)
+                    RunContributionAggregator.Instance.MergeMaxFrom(diskTotals);
 
                 ContributionPersistence.SaveRunSummary(
                     seed!,
@@ -215,6 +219,7 @@ public static class RunDataCollector
             Character = characterId,
             Ascension = run.Ascension,
             Win = isVictory,
+            Branch = BranchManager.CurrentBranch,
             PlayerWinRate = ComputeLiveWinRate(isVictory),
             NumPlayers = run.Players?.Count ?? 1,
             FloorReached = CurrentFloor,

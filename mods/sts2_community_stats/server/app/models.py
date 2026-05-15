@@ -118,13 +118,24 @@ class RunUploadPayload(BaseModel):
     encounters: list[EncounterUpload] = Field(default_factory=list, max_length=100)
     contributions: list[ContributionUpload] = Field(default_factory=list, max_length=5000)
 
-    # Optional dedup hash for history import (PRD §3.19.3)
-    run_hash: str | None = Field(None, max_length=64)
+    # Optional dedup hash for history import (PRD §3.19.3).
+    # Format: 32-char uppercase hex (SHA256 truncated to 128 bits).
+    run_hash: str | None = Field(None, max_length=64, pattern=r"^([A-F0-9]{32})$")
+
+    # Branch: "release" / "beta" / "unknown" (default for old clients)
+    branch: str = Field("unknown", max_length=8, pattern=r"^(release|beta|unknown)$")
 
     @field_validator("character")
     @classmethod
     def character_upper(cls, v: str) -> str:
-        return v.upper()
+        v = v.upper()
+        known = {"IRONCLAD", "SILENT", "DEFECT", "NECROBINDER", "REGENT"}
+        if v not in known:
+            raise ValueError(
+                f"Unknown character: {v}. "
+                f"Expected one of: {', '.join(sorted(known))}"
+            )
+        return v
 
 
 # ============================================================

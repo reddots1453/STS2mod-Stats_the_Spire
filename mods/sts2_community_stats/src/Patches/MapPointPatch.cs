@@ -24,6 +24,44 @@ public static class MapPointPatch
         MapPointType.Boss
     };
 
+    // Live combat-point overlays we've attached. When F9 changes filter and
+    // StatsProvider rebuilds the bundle, we re-run AfterRefreshVisuals on
+    // every still-mounted point so its overlay reflects the new sample.
+    private static readonly List<WeakReference<NMapPoint>> _liveCombatPoints = new();
+
+    public static void SubscribeRefresh()
+    {
+        StatsProvider.DataRefreshed += OnDataRefreshed;
+    }
+
+    private static void OnDataRefreshed()
+    {
+        Safe.Run(() =>
+        {
+            for (int i = _liveCombatPoints.Count - 1; i >= 0; i--)
+            {
+                if (_liveCombatPoints[i].TryGetTarget(out var mp)
+                    && Godot.GodotObject.IsInstanceValid(mp)
+                    && mp.IsInsideTree())
+                    AfterRefreshVisuals(mp);
+                else
+                    _liveCombatPoints.RemoveAt(i);
+            }
+        });
+    }
+
+    private static void TrackCombatPoint(NMapPoint mp)
+    {
+        for (int i = _liveCombatPoints.Count - 1; i >= 0; i--)
+        {
+            if (!_liveCombatPoints[i].TryGetTarget(out var t)
+                || !Godot.GodotObject.IsInstanceValid(t))
+                _liveCombatPoints.RemoveAt(i);
+            else if (t == mp) return;
+        }
+        _liveCombatPoints.Add(new WeakReference<NMapPoint>(mp));
+    }
+
     [HarmonyPatch(typeof(NMapPoint), nameof(NMapPoint.RefreshVisualsInstantly))]
     [HarmonyPostfix]
     public static void AfterRefreshVisuals(NMapPoint __instance)
@@ -33,6 +71,7 @@ public static class MapPointPatch
             var point = __instance.Point;
             if (point == null) return;
             if (!CombatPointTypes.Contains(point.PointType)) return;
+            TrackCombatPoint(__instance);
 
             // Round 9 round 33: when MonsterDanger toggle is off, also strip
             // any overlay already attached on traveled nodes — previously the
@@ -177,9 +216,7 @@ public static class MapPointPatch
             var runState = RunManager.Instance?.DebugOnlyGetState();
             var me = runState?.Players?.FirstOrDefault();
             if (me == null) return 0;
-            var used = Traverse.Create(me).Field("ExtraFields")
-                .Field("CardShopRemovalsUsed").GetValue<int>();
-            return used;
+            return me.ExtraFields.CardShopRemovalsUsed;
         }
         catch { return 0; }
     }

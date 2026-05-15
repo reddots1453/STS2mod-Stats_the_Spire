@@ -7,10 +7,10 @@ namespace CommunityStats.Config;
 /// </summary>
 public static class ModConfig
 {
-    public const string ModVersion = "2.0.0";
+    public const string ModVersion = "0.16.2";
 
     // Server (can be overridden via config.json for local testing)
-    public static string ApiBaseUrl { get; set; } = "https://statsthespire.duckdns.org/v1";
+    public static string ApiBaseUrl { get; set; } = "https://statsthespire.org.cn/v1";
     public static int QueryTimeoutMs { get; set; } = 5000;
     public static int UploadTimeoutMs { get; set; } = 30000;
 
@@ -22,6 +22,7 @@ public static class ModConfig
     /// send data over HTTP unless explicitly opted-in.
     /// </summary>
     public static bool AllowHttp { get; set; } = false;
+    public static bool AutoUpdate { get; set; } = true;
 
     // User preferences
     public static bool EnableUpload { get; set; } = true;
@@ -60,17 +61,21 @@ public static class ModConfig
     // Active filter (mutable at runtime)
     public static FilterSettings CurrentFilter { get; set; } = new();
 
-    // Config override file path (next to the mod DLL)
+    // Config override file path (next to the mod DLL).
+    // Named .cfg so the game engine doesn't scan it as a mod manifest.
     public static string ConfigPath
     {
         get
         {
             var asmLocation = typeof(ModConfig).Assembly.Location;
             if (!string.IsNullOrEmpty(asmLocation))
-                return Path.Combine(Path.GetDirectoryName(asmLocation)!, "config.json");
-            return Path.Combine(DataDir, "config.json");
+                return Path.Combine(Path.GetDirectoryName(asmLocation)!, "settings.cfg");
+            return Path.Combine(DataDir, "settings.cfg");
         }
     }
+
+    /// <summary>User-modifiable preferences saved to AppData (always writable).</summary>
+    public static string PrefsPath => Path.Combine(DataDir, "mod_prefs.json");
 
     public static void EnsureDirectories()
     {
@@ -80,15 +85,24 @@ public static class ModConfig
     }
 
     /// <summary>
-    /// Load config.json overrides (e.g. api_base_url for local testing).
-    /// Call this before any API client initialization.
+    /// Load config overrides from disk. Reads shipped config.json first, then
+    /// user's mod_prefs.json from AppData (overrides take priority — survives
+    /// mod updates and directory permission issues).
     /// </summary>
     public static void LoadOverrides()
     {
+        // Phase 1: shipped defaults (config.json next to the DLL)
+        ApplyConfigFile(ConfigPath);
+        // Phase 2: user prefs (AppData, always writable — overrides shipped defaults)
+        ApplyConfigFile(PrefsPath);
+    }
+
+    private static void ApplyConfigFile(string path)
+    {
         try
         {
-            if (!File.Exists(ConfigPath)) return;
-            var json = File.ReadAllText(ConfigPath);
+            if (!File.Exists(path)) return;
+            var json = File.ReadAllText(path);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -100,12 +114,13 @@ public static class ModConfig
                 UploadTimeoutMs = ut.GetInt32();
             if (root.TryGetProperty("allow_http", out var ah))
                 AllowHttp = ah.GetBoolean();
+            if (root.TryGetProperty("auto_update", out var au))
+                AutoUpdate = au.GetBoolean();
             if (root.TryGetProperty("enable_upload", out var eu))
                 EnableUpload = eu.GetBoolean();
             if (root.TryGetProperty("language", out var lang))
                 Language = lang.GetString() ?? Language;
 
-            // Feature toggles
             if (root.TryGetProperty("feature_toggles", out var toggles))
             {
                 try
@@ -115,18 +130,15 @@ public static class ModConfig
                 catch { Toggles = new(); }
             }
 
-            // Panel position
             if (root.TryGetProperty("panel_position", out var pos))
             {
                 if (pos.TryGetProperty("x", out var px)) PanelPositionX = px.GetSingle();
                 if (pos.TryGetProperty("y", out var py)) PanelPositionY = py.GetSingle();
             }
 
-            // My data only filter
             if (root.TryGetProperty("use_my_data_only", out var myData))
                 UseMyDataOnly = myData.GetBoolean();
 
-            // History import flag (PRD §3.19)
             if (root.TryGetProperty("history_import_completed", out var hic))
                 HistoryImportCompleted = hic.GetBoolean();
         }
@@ -134,7 +146,8 @@ public static class ModConfig
     }
 
     /// <summary>
-    /// Save current settings (feature toggles, panel position, preferences) to config.json.
+    /// Save current settings (feature toggles, language, preferences) to AppData.
+    /// Uses PrefsPath so settings survive mod updates and directory permissions.
     /// </summary>
     public static void SaveSettings()
     {
@@ -142,13 +155,10 @@ public static class ModConfig
         {
             var data = new Dictionary<string, object?>
             {
-                ["api_base_url"] = ApiBaseUrl,
-                ["allow_http"] = AllowHttp,
-                ["query_timeout_ms"] = QueryTimeoutMs,
-                ["upload_timeout_ms"] = UploadTimeoutMs,
-                ["enable_upload"] = EnableUpload,
                 ["language"] = Language,
                 ["feature_toggles"] = Toggles,
+                ["auto_update"] = AutoUpdate,
+                ["enable_upload"] = EnableUpload,
                 ["use_my_data_only"] = UseMyDataOnly,
                 ["history_import_completed"] = HistoryImportCompleted,
             };
@@ -158,8 +168,9 @@ public static class ModConfig
                 data["panel_position"] = new { x = PanelPositionX.Value, y = PanelPositionY.Value };
             }
 
+            EnsureDirectories();
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(ConfigPath, json);
+            File.WriteAllText(PrefsPath, json);
         }
         catch { /* ignore write failures */ }
     }

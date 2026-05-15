@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>sts2_statsthespire_local</AssemblyName>
+    <RootNamespace>CommunityStats</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Output directly to mod folder (STS2 expects DLL next to manifest.json) -->
+    <OutputPath>.\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+
+    <!-- Copy only our DLL, not dependencies (game already has them) -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+
+    <!-- Suppress .deps.json generation (STS2 scans all .json as mod manifests) -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+
+    <!--
+      Game version target:
+        Stable (v0.103.x):  dotnet build
+        Beta   (v0.105.x+): dotnet build -p:DefineConstants=STS2_GE_V105
+    -->
+  </PropertyGroup>
+
+  <!-- STS2 game assemblies -->
+  <ItemGroup>
+    <Reference Include="sts2">
+      <HintPath>..\..\..\data_sts2_windows_x86_64\sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>..\..\..\data_sts2_windows_x86_64\GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>..\..\..\data_sts2_windows_x86_64\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

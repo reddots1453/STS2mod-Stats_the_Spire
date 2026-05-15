@@ -1,0 +1,11 @@
+{
+  "id": "sts2_kb_extractor",
+  "name": "STS2 Knowledge Base Extractor",
+  "author": "Dev",
+  "description": "Extracts all game entity data (cards, relics, potions, monsters, encounters, events, powers) to JSON + Markdown knowledge base files.",
+  "version": "0.1.0",
+  "has_dll": true,
+  "has_pck": false,
+  "affects_gameplay": false,
+  "dependencies": []
+}

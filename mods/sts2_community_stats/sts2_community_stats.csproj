@@ -19,6 +19,12 @@
 
     <!-- Suppress .deps.json generation (STS2 scans all .json as mod manifests) -->
     <GenerateDependencyFile>false</GenerateDependencyFile>
+
+    <!--
+      Game version target:
+        Stable (v0.103.x):  dotnet build
+        Beta   (v0.105.x+): dotnet build -p:DefineConstants=STS2_GE_V105
+    -->
   </PropertyGroup>
 
   <!-- STS2 game assemblies -->

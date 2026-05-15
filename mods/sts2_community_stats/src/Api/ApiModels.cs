@@ -16,6 +16,7 @@ public class RunUploadPayload
     [JsonPropertyName("player_win_rate")]public float PlayerWinRate { get; set; }
     [JsonPropertyName("num_players")]    public int NumPlayers { get; set; }
     [JsonPropertyName("floor_reached")]  public int FloorReached { get; set; }
+    [JsonPropertyName("branch")]         public string Branch { get; set; } = "";
 
     [JsonPropertyName("card_choices")]       public List<CardChoiceUpload> CardChoices { get; set; } = [];
     [JsonPropertyName("event_choices")]      public List<EventChoiceUpload> EventChoices { get; set; } = [];

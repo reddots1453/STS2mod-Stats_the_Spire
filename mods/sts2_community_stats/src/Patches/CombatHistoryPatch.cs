@@ -2,6 +2,7 @@ using CommunityStats.Collection;
 using CommunityStats.Util;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Combat.History;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
@@ -19,6 +20,15 @@ using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.ValueProps;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 
+// v0.105.0+: CombatState extracted to ICombatState interface.
+// Build for beta (>=v0.105) with: dotnet build -p:DefineConstants=STS2_GE_V105
+// Build for stable (<v0.105) without the constant.
+#if STS2_GE_V105
+using CombatStateType = MegaCrit.Sts2.Core.Combat.ICombatState;
+#else
+using CombatStateType = MegaCrit.Sts2.Core.Combat.CombatState;
+#endif
+
 namespace CommunityStats.Patches;
 
 // ═══════════════════════════════════════════════════════════
@@ -28,13 +38,29 @@ namespace CommunityStats.Patches;
 [HarmonyPatch]
 public static class CombatHistoryPatch
 {
+    /// <summary>
+    /// True when <paramref name="player"/> is the local player. In single-
+    /// player (NetId == null), the only player is always local. In multi-
+    /// player, checks against LocalContext.NetId.
+    /// </summary>
+    public static bool IsLocalPlayer(Player? player)
+    {
+        if (player == null) return false;
+        if (LocalContext.NetId.HasValue)
+            return LocalContext.IsMe(player);
+        return true; // single-player: the one player IS local
+    }
+
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.CardPlayStarted))]
     [HarmonyPostfix]
-    public static void AfterCardPlayStarted(CombatState combatState, CardPlay cardPlay)
+    public static void AfterCardPlayStarted(CombatStateType combatState, CardPlay cardPlay)
     {
         Safe.Run(() =>
         {
             var card = cardPlay.Card;
+            // Multiplayer: only track cards played by the local player.
+            if (!IsLocalPlayer(card?.Owner)) return;
+
             var cardId = card?.Id.Entry;
             if (cardId != null)
                 CombatTracker.Instance.OnCardPlayStarted(cardId, card!.GetHashCode());
@@ -57,7 +83,7 @@ public static class CombatHistoryPatch
 
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.CardPlayFinished))]
     [HarmonyPostfix]
-    public static void AfterCardPlayFinished(CombatState combatState, CardPlay cardPlay)
+    public static void AfterCardPlayFinished(CombatStateType combatState, CardPlay cardPlay)
     {
         Safe.Run(() =>
         {
@@ -85,7 +111,7 @@ public static class CombatHistoryPatch
 
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.DamageReceived))]
     [HarmonyPostfix]
-    public static void AfterDamageReceived(CombatState combatState,
+    public static void AfterDamageReceived(CombatStateType combatState,
         Creature receiver, Creature? dealer, DamageResult result, CardModel? cardSource)
     {
         Safe.Run(() =>
@@ -106,7 +132,11 @@ public static class CombatHistoryPatch
             // rationale. Still pass through so encounter tracking / damage
             // dedup run normally; only the enemy-side damage ledger is
             // suppressed.
+#if STS2_GE_V105
+            bool invincible = !isPlayerReceiver && receiver.HpDisplay.IsInfinite();
+#else
             bool invincible = !isPlayerReceiver && receiver.ShowsInfiniteHp;
+#endif
 
             CombatTracker.Instance.OnDamageDealt(
                 result.TotalDamage,
@@ -164,7 +194,7 @@ public static class CombatHistoryPatch
 
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.BlockGained))]
     [HarmonyPostfix]
-    public static void AfterBlockGained(CombatState combatState,
+    public static void AfterBlockGained(CombatStateType combatState,
         Creature receiver, int amount, ValueProp props, CardPlay? cardPlay)
     {
         Safe.Run(() =>
@@ -187,7 +217,7 @@ public static class CombatHistoryPatch
 
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.PowerReceived))]
     [HarmonyPostfix]
-    public static void AfterPowerReceived(CombatState combatState,
+    public static void AfterPowerReceived(CombatStateType combatState,
         PowerModel power, decimal amount, Creature? applier)
     {
         Safe.Run(() =>
@@ -200,7 +230,7 @@ public static class CombatHistoryPatch
 
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.CardDrawn))]
     [HarmonyPostfix]
-    public static void AfterCardDrawn(CombatState combatState, CardModel card, bool fromHandDraw)
+    public static void AfterCardDrawn(CombatStateType combatState, CardModel card, bool fromHandDraw)
     {
         Safe.Run(() => CombatTracker.Instance.OnCardDrawn(fromHandDraw));
     }
@@ -213,25 +243,19 @@ public static class CombatHistoryPatch
 // is attributed back to the card that applied the power.
 // ═══════════════════════════════════════════════════════════
 
-[HarmonyPatch]
-public static class PowerApplyPatch
-{
-    [HarmonyPatch(typeof(PowerModel), nameof(PowerModel.ApplyInternal))]
-    [HarmonyPostfix]
-    public static void AfterApplyInternal(PowerModel __instance, Creature owner)
-    {
-        Safe.Run(() =>
-        {
-            var powerId = __instance.Id.Entry;
-            if (string.IsNullOrEmpty(powerId)) return;
-
-            int creatureHash = owner.GetHashCode();
-            bool isPlayerTarget = owner.IsPlayer;
-
-            CombatTracker.Instance.OnPowerApplied(powerId, __instance.Amount, creatureHash, isPlayerTarget);
-        });
-    }
-}
+// 4.18 fix: PowerApplyPatch (AfterApplyInternal) removed in favour of the
+// unified DebuffDurationPatch.AfterSetAmount path. Reason: ApplyInternal
+// fires AFTER SetAmount has already updated __instance.Amount to the new
+// cumulative value, so the only amount our postfix could see was the
+// running total. Feeding that into RecordDebuffLayer made each new
+// Vulnerable/Poison/etc application's layer carry duration = total stacks
+// (e.g. layer #2 had duration 2 instead of the 1 it actually added),
+// skewing the FIFO fractions and — combined with per-turn DecrementDebuffLayers
+// — eventually collapsing every multi-source debuff to a single surviving
+// layer that swallowed all the credit. SetAmount runs first AND has access
+// to both __state (prior) and amount (post), so its postfix can compute
+// the true delta and feed that to OnPowerApplied. See DebuffDurationPatch
+// below for the replacement.
 
 /// <summary>
 /// Manual RelicHookContext patcher. Sets/clears _activeRelicId around relic hook methods
@@ -253,6 +277,9 @@ public static class RelicHookContextPatcher
     {
         Safe.Run(() =>
         {
+            // Multiplayer: only track relics owned by the local player.
+            if (!CombatHistoryPatch.IsLocalPlayer(__instance.Owner)) return;
+
             var relicId = __instance.Id.Entry;
             CombatTracker.Instance.SetActiveRelic(relicId);
             // Pending draw source for async relic hooks (CharonsAshes draws via GamePiece etc.)
@@ -659,11 +686,49 @@ public static class PowerHookContextPatcher
         Safe.Run(() =>
         {
             var powerId = __instance.Id.Entry;
-            CombatTracker.Instance.SetActivePowerSource(powerId);
+            if (string.IsNullOrEmpty(powerId)) return;
+
+            // Resolve source: try the global _powerSources map first (player
+            // buffs like Strength / Vigor / DemonForm). For enemy-side
+            // debuffs the global map is intentionally empty (Fix 3.1) — fall
+            // back to the per-enemy _debuffLayers FIFO head so hooks like
+            // StranglePower.AfterCardPlayed (which directly calls
+            // CreatureCmd.Damage on its enemy owner) attribute the
+            // Unblockable/Unpowered damage back to the card that applied
+            // the debuff instead of dropping it as UNTRACKED.
+            var source = ContributionMap.Instance.GetPowerSource(powerId);
+            if (source == null)
+            {
+                try
+                {
+                    var owner = __instance.Owner;
+                    if (owner != null && !owner.IsPlayer)
+                    {
+                        source = ContributionMap.Instance.GetDebuffHeadSource(
+                            owner.GetHashCode(), powerId);
+                    }
+                }
+                catch { }
+            }
+
+            if (source != null)
+            {
+                CombatTracker.Instance.SetActivePowerSourceManual(
+                    powerId, source.SourceId, source.SourceType);
+            }
+            else
+            {
+                // No known source — keep the legacy behaviour of caching the
+                // powerId so OnDamageDealt at least knows we're inside a
+                // power-hook context. _activePowerSourceId stays null →
+                // attribution falls through to whatever single-source
+                // resolver picks up next.
+                CombatTracker.Instance.SetActivePowerSource(powerId);
+            }
+
             // Also set pending draw/block/damage source for async power hooks.
             // These persist through async await because they're AsyncLocal-backed.
             // Consumed by OnCardDrawn/OnBlockGained after use.
-            var source = ContributionMap.Instance.GetPowerSource(powerId);
             if (source != null)
             {
                 if (_powerMultiDrawIds.Contains(powerId))
@@ -730,6 +795,17 @@ public static class PowerHookContextPatcher
         TryPatch(harmony, typeof(EnvenomPower), "AfterDamageGiven", prefix, postfix);
         TryPatch(harmony, typeof(NoxiousFumesPower), "AfterSideTurnStart", prefix, postfix);
         TryPatch(harmony, typeof(InfiniteBladesPower), "BeforeHandDraw", prefix, postfix);
+        // Strangle: BeforeCardPlayed records the per-card amount, AfterCardPlayed
+        // calls CreatureCmd.Damage with Unblockable+Unpowered against the enemy
+        // owner. Without this patch the extra damage runs with no active
+        // context — falling back to the playing card's source ID (or
+        // UNTRACKED), so the bonus damage was attributed to whichever card
+        // happened to trigger the hook rather than the card that applied
+        // Strangle. Setting the active power-source context here lets
+        // OnDamageDealt's indirect path resolve to the FIFO head of
+        // _debuffLayers[(enemy, "STRANGLE_POWER")] (the applier card).
+        TryPatch(harmony, typeof(StranglePower), "BeforeCardPlayed", prefix, postfix);
+        TryPatch(harmony, typeof(StranglePower), "AfterCardPlayed", prefix, postfix);
 
         // ── Defect ──
         TryPatch(harmony, typeof(StormPower), "AfterCardPlayed", prefix, postfix);
@@ -1034,26 +1110,26 @@ public static class DamageModifierPatch
         decimal subTotal = vulnBaseDelta + phrogDelta + crueltyDelta + debilitateDelta;
         if (subTotal <= 0) return;
 
-        // Vulnerable base — split among FIFO sources (Fix-4)
+        // PRD M5 — FIFO head-source attribution for Vulnerable. Vulnerable
+        // is a boolean ×1.5 multiplier (stack count only affects duration,
+        // not magnitude), so the entire turn's bonus belongs to whichever
+        // applier sits at the FIFO queue head. Per-turn DecrementDebuffLayers
+        // ticks the head down each turn so the next source promotes when
+        // the head expires.
         int vulnShare = (int)Math.Round(totalContrib * (vulnBaseDelta / subTotal));
         if (vulnShare > 0 && target != null)
         {
-            var fractions = ContributionMap.Instance.GetDebuffSourceFractions(target.GetHashCode(), "VULNERABLE_POWER");
-            if (fractions.Count > 0)
+            var head = ContributionMap.Instance.GetDebuffHeadSource(
+                target.GetHashCode(), "VULNERABLE_POWER");
+            if (head != null)
             {
-                foreach (var (srcId, srcType, frac) in fractions)
-                {
-                    int srcShare = (int)Math.Round(vulnShare * frac);
-                    if (srcShare > 0)
-                        modList.Add(new ContributionMap.ModifierContribution(srcId, srcType, srcShare));
-                }
+                modList.Add(new ContributionMap.ModifierContribution(
+                    head.SourceId, head.SourceType, vulnShare));
             }
             else
             {
-                var vulnSource = ContributionMap.Instance.GetPowerSource("VULNERABLE_POWER");
-                string vsId = vulnSource?.SourceId ?? "VULNERABLE_POWER";
-                string vsType = vulnSource?.SourceType ?? "power";
-                modList.Add(new ContributionMap.ModifierContribution(vsId, vsType, vulnShare));
+                modList.Add(new ContributionMap.ModifierContribution(
+                    "VULNERABLE_POWER", "power", vulnShare));
             }
         }
 
@@ -1099,6 +1175,49 @@ public static class DamageModifierPatch
 // Also captures Colossus/Intangible reduction for enemy→player damage.
 // ═══════════════════════════════════════════════════════════
 
+/// <summary>
+/// Thread-static guard that is true only while we are inside a
+/// CreatureCmd.Damage call (real combat damage). Hook.ModifyDamage
+/// is also called during intent-display UI updates and AI evaluation;
+/// those calls happen OUTSIDE CreatureCmd.Damage and must not produce
+/// contribution entries.
+/// </summary>
+[HarmonyPatch]
+public static class RealDamageGuardPatch
+{
+    [ThreadStatic]
+    public static bool IsInsideCreatureDamage;
+
+    // CreatureCmd.Damage has 10 overloads. We need the root overload
+    // (IEnumerable<Creature> targets) that actually calls Hook.ModifyDamage
+    // at line 141. Patching without parameter types would match an
+    // intermediate overload whose first await fires before the root
+    // overload even starts.
+    [HarmonyPatch(typeof(CreatureCmd), "Damage",
+        new Type[] {
+            typeof(PlayerChoiceContext),
+            typeof(IEnumerable<Creature>),
+            typeof(decimal),
+            typeof(ValueProp),
+            typeof(Creature),   // dealer (nullable)
+            typeof(CardModel),  // cardSource (nullable)
+        })]
+    [HarmonyPrefix]
+    public static void BeforeDamage() => IsInsideCreatureDamage = true;
+
+    [HarmonyPatch(typeof(CreatureCmd), "Damage",
+        new Type[] {
+            typeof(PlayerChoiceContext),
+            typeof(IEnumerable<Creature>),
+            typeof(decimal),
+            typeof(ValueProp),
+            typeof(Creature),
+            typeof(CardModel),
+        })]
+    [HarmonyPostfix]
+    public static void AfterDamage() => IsInsideCreatureDamage = false;
+}
+
 [HarmonyPatch]
 public static class EnemyDamageIntentPatch
 {
@@ -1133,9 +1252,16 @@ public static class EnemyDamageIntentPatch
     {
         Safe.Run(() =>
         {
-            // Only track enemy→player damage reduction (Colossus, Intangible)
+            // Only track enemy→player damage reduction (Intangible, Colossus,
+            // generic debuffs).
             if (target == null || !target.IsPlayer) return;
             if (dealer == null || dealer.IsPlayer) return;
+            // Only track damage calculated inside a real CreatureCmd.Damage
+            // call. Hook.ModifyDamage is also called during intent-display
+            // UI updates and AI evaluation — those recalculations fire every
+            // time the player gains/loses Intangible and would accumulate
+            // phantom MitigatedByBuff contributions.
+            if (!RealDamageGuardPatch.IsInsideCreatureDamage) return;
 
             decimal baseDmg = __state;
             decimal finalDmg = __result;
@@ -1149,7 +1275,24 @@ public static class EnemyDamageIntentPatch
                     var powerId = power.Id.Entry;
                     if (string.IsNullOrEmpty(powerId)) continue;
 
-                    // Intangible: ModifyDamageCap reduced damage
+                    // Intangible: ModifyDamageCap caps damage at 1 (or 5
+                    // with TheBoot). The cap is applied inside this same
+                    // Hook.ModifyDamage chain, so baseDmg (the original
+                    // per-hit damage entering the chain) minus finalDmg
+                    // (the capped per-hit result) *is* the Intangible
+                    // prevention for this hit. The PowerMitigationPatch
+                    // on ModifyHpLostAfterOsty never fires for Intangible
+                    // because the chain above already capped the value
+                    // before it reaches that stage — so there is no
+                    // double-count risk.
+                    // NOTE: when other sub-1 multipliers (Weak / Colossus)
+                    // are also active, their reduction is included in
+                    // (baseDmg - finalDmg) as well. Those are tracked
+                    // independently via OnWeakMitigation / OnColossus-
+                    // Mitigation and will appear as separate rows in the
+                    // defense bar. The defense total is the sum across
+                    // all rows, so overcounting one row does not inflate
+                    // the total.
                     if (powerId == "INTANGIBLE_POWER")
                     {
                         int prevented = (int)(baseDmg - finalDmg);
@@ -1162,6 +1305,50 @@ public static class EnemyDamageIntentPatch
                         int prevented = (int)(baseDmg - finalDmg);
                         if (prevented > 0)
                             CombatTracker.Instance.OnColossusMitigation(prevented, target.GetHashCode());
+                    }
+                    // 4.18 restoration: generic debuff-on-dealer mitigation path.
+                    // For any OTHER power on the dealer with multiplier < 1 (i.e. a
+                    // debuff the player applied reducing enemy outgoing damage),
+                    // attribute the prevented damage back to whichever card/relic
+                    // applied the debuff via the FIFO layer table.
+                    //
+                    // WEAK_POWER is explicitly skipped — it owns the dedicated
+                    // OnWeakMitigation code path (called from AfterDamageDealt in
+                    // the core module), and double-attributing it here would
+                    // produce two rows in the contribution chart: one credited to
+                    // the card (from OnWeakMitigation) AND one credited to the
+                    // power ID itself (from this fallback). That's exactly the
+                    // "眼部攻击 + weak_power 双份" bug from the 4.18 changelog.
+                    else if (powerId != "WEAK_POWER")
+                    {
+                        if (power.Owner == null || power.Owner != dealer) continue;
+                        decimal multiplicative;
+                        try
+                        {
+                            multiplicative = power.ModifyDamageMultiplicative(
+                                target, baseDmg, props, dealer, cardSource);
+                        }
+                        catch { continue; }
+                        if (multiplicative <= 0m || multiplicative >= 1m) continue;
+
+                        int prevented = (int)(baseDmg / multiplicative - baseDmg);
+                        if (prevented <= 0) continue;
+
+                        var fractions = ContributionMap.Instance.GetDebuffSourceFractions(
+                            dealer.GetHashCode(), powerId);
+                        if (fractions.Count > 0)
+                        {
+                            foreach (var (srcId, srcType, frac) in fractions)
+                            {
+                                int share = (int)System.Math.Round(prevented * frac);
+                                if (share > 0)
+                                    CombatTracker.Instance.OnDebuffPrevention(srcId, srcType, share);
+                            }
+                        }
+                        // Intentionally no power-id fallback: if no layer is
+                        // recorded we drop the attribution rather than write
+                        // a row keyed by the power id (which would surface as
+                        // a bare "SLOWED_POWER"/"WEAK_POWER" bar in the chart).
                     }
                 }
                 else if (mod is RelicModel relic)
@@ -1211,20 +1398,48 @@ public static class DebuffDurationPatch
     {
         Safe.Run(() =>
         {
-            // Only care about duration decrements (amount < old) on non-player creatures
-            if (amount >= __state) return;
+            if (amount == __state) return;
             var owner = __instance.Owner;
-            if (owner == null || owner.IsPlayer) return;
+            if (owner == null) return;
 
             var powerId = __instance.Id.Entry;
             if (string.IsNullOrEmpty(powerId)) return;
 
-            // Only decrement for duration-based debuffs we track (Vulnerable, Weak)
-            if (powerId != "VULNERABLE_POWER" && powerId != "WEAK_POWER") return;
+            int creatureHash = owner.GetHashCode();
+            bool isPlayer = owner.IsPlayer;
 
-            int decremented = __state - amount;
-            for (int i = 0; i < decremented; i++)
-                ContributionMap.Instance.DecrementDebuffLayers(owner.GetHashCode(), powerId);
+            if (amount > __state)
+            {
+                // 4.18 fix: feed OnPowerApplied the DELTA, not the new total.
+                // This makes every new application of a duration-based debuff
+                // (Vulnerable/Poison/etc) record its own FIFO layer with the
+                // duration it actually contributed, so multi-source attribution
+                // splits proportionally instead of collapsing to one source.
+                int delta = amount - __state;
+                CombatTracker.Instance.OnPowerApplied(powerId, delta, creatureHash, isPlayer);
+            }
+            else if (!isPlayer
+                && (powerId == "VULNERABLE_POWER" || powerId == "WEAK_POWER"
+                    || powerId == "POISON_POWER"))
+            {
+                // Per-turn decrement: tick FIFO layers down by the lost
+                // stacks so layers expire in application order.
+                //
+                // VUL/WEAK: each turn power.amount decreases by 1, the head
+                // layer's Duration drops by 1, and when it hits 0 the next
+                // applier promotes to the head (PRD M5 / DEF-2c).
+                //
+                // POISON: each turn power.amount = stacks_remaining drops
+                // by 1 after the tick fires. We attribute that lost stack
+                // to whichever source contributed the FIFO-head stack so
+                // the per-source totals sum exactly to the enemy's total
+                // poison damage (PRD I1). Without this, multi-source poison
+                // would either over-attribute (no decrement, fractions
+                // never converge) or under-attribute (stacks "leak").
+                int decremented = __state - amount;
+                for (int i = 0; i < decremented; i++)
+                    ContributionMap.Instance.DecrementDebuffLayers(creatureHash, powerId);
+            }
         });
     }
 }
@@ -1385,58 +1600,92 @@ public static class CardOriginPatch
 [HarmonyPatch]
 public static class CardUpgradeTrackerPatch
 {
-    private static decimal _preDamage;
-    private static decimal _preBlock;
-    private static int _cardHash;
+    private static Dictionary<int, (decimal Damage, decimal Block)> _preUpgradeValues = new();
 
     /// <summary>
-    /// Before a card is upgraded, capture its current damage/block values.
+    /// Before a batch upgrade, capture pre-upgrade damage/block for every
+    /// upgradable card.  We patch the IEnumerable overload because the
+    /// single-card overload delegates to it — one patch covers both paths.
     /// </summary>
     [HarmonyPatch(typeof(CardCmd), nameof(CardCmd.Upgrade),
-        new Type[] { typeof(CardModel), typeof(CardPreviewStyle) })]
+        new Type[] { typeof(IEnumerable<CardModel>), typeof(CardPreviewStyle) })]
     [HarmonyPrefix]
-    public static void BeforeUpgrade(CardModel card)
+    public static void BeforeUpgrade(IEnumerable<CardModel> cards)
     {
         Safe.Run(() =>
         {
-            _cardHash = card.GetHashCode();
-            var dv = card.DynamicVars;
-            _preDamage = dv != null && dv.TryGetValue("Damage", out var dmg) ? dmg.BaseValue : 0;
-            _preBlock = dv != null && dv.TryGetValue("Block", out var blk) ? blk.BaseValue : 0;
+            _preUpgradeValues.Clear();
+            foreach (var card in cards)
+            {
+                if (!card.IsUpgradable) continue;
+                var dv = card.DynamicVars;
+                decimal preDamage = dv != null && dv.TryGetValue("Damage", out var dmg) ? dmg.BaseValue : 0;
+                decimal preBlock = dv != null && dv.TryGetValue("Block", out var blk) ? blk.BaseValue : 0;
+                _preUpgradeValues[card.GetHashCode()] = (preDamage, preBlock);
+            }
         });
     }
 
     /// <summary>
-    /// After upgrade, compute delta and record upgrade source.
+    /// After batch upgrade, compute damage/block deltas for each card and
+    /// record them with the correct upgrader source.
     /// </summary>
     [HarmonyPatch(typeof(CardCmd), nameof(CardCmd.Upgrade),
-        new Type[] { typeof(CardModel), typeof(CardPreviewStyle) })]
+        new Type[] { typeof(IEnumerable<CardModel>), typeof(CardPreviewStyle) })]
     [HarmonyPostfix]
-    public static void AfterUpgrade(CardModel card)
+    public static void AfterUpgrade(IEnumerable<CardModel> cards)
     {
+        if (_preUpgradeValues.Count == 0) return;
         Safe.Run(() =>
         {
-            if (card.GetHashCode() != _cardHash) return;
-
-            var dv = card.DynamicVars;
-            decimal postDamage = dv != null && dv.TryGetValue("Damage", out var dmg) ? dmg.BaseValue : 0;
-            decimal postBlock = dv != null && dv.TryGetValue("Block", out var blk) ? blk.BaseValue : 0;
-
-            int damageDelta = (int)(postDamage - _preDamage);
-            int blockDelta = (int)(postBlock - _preBlock);
-
-            if (damageDelta <= 0 && blockDelta <= 0) return;
-
-            // Store the delta for later attribution when the upgraded card is played.
-            // Source = the card that triggered the upgrade (e.g., Armaments), or "upgrade" fallback.
-            // Fix D: also capture the upgrader's origin so potion-generated vs deck-native
-            // upgraders (e.g. SKILL_POTION Armaments vs deck Armaments) attribute to distinct buckets.
             var tracker = CombatTracker.Instance;
-            string sourceId = tracker.ActiveCardId ?? "upgrade";
-            string sourceType = tracker.ActiveCardId != null ? "card" : "upgrade";
-            string? upgraderOrigin = tracker.ActiveCardId != null ? tracker.ActiveCardOrigin : null;
-            ContributionMap.Instance.RecordUpgradeDelta(card.GetHashCode(),
-                damageDelta, blockDelta, sourceId, sourceType, upgraderOrigin);
+            string sourceId;
+            string sourceType;
+            string? upgraderOrigin = null;
+            if (tracker.ActivePowerSourceId != null)
+            {
+                sourceId = tracker.ActivePowerSourceId;
+                sourceType = tracker.ActivePowerSourceType ?? "power";
+            }
+            else if (tracker.ActiveRelicId != null)
+            {
+                sourceId = tracker.ActiveRelicId;
+                sourceType = "relic";
+            }
+            else if (tracker.ActivePotionId != null)
+            {
+                sourceId = tracker.ActivePotionId;
+                sourceType = "potion";
+            }
+            else if (tracker.ActiveCardId != null)
+            {
+                sourceId = tracker.ActiveCardId;
+                sourceType = "card";
+                upgraderOrigin = tracker.ActiveCardOrigin;
+            }
+            else
+            {
+                sourceId = "upgrade";
+                sourceType = "upgrade";
+            }
+
+            foreach (var card in cards)
+            {
+                int hash = card.GetHashCode();
+                if (!_preUpgradeValues.TryGetValue(hash, out var pre)) continue;
+
+                var dv = card.DynamicVars;
+                decimal postDamage = dv != null && dv.TryGetValue("Damage", out var dmg) ? dmg.BaseValue : 0;
+                decimal postBlock = dv != null && dv.TryGetValue("Block", out var blk) ? blk.BaseValue : 0;
+
+                int damageDelta = (int)(postDamage - pre.Damage);
+                int blockDelta = (int)(postBlock - pre.Block);
+
+                if (damageDelta <= 0 && blockDelta <= 0) continue;
+
+                ContributionMap.Instance.RecordUpgradeDelta(hash,
+                    damageDelta, blockDelta, sourceId, sourceType, upgraderOrigin);
+            }
         });
     }
 }
@@ -1535,7 +1784,7 @@ public static class PotionUsedPatch
 {
     [HarmonyPatch(typeof(CombatHistory), nameof(CombatHistory.PotionUsed))]
     [HarmonyPostfix]
-    public static void AfterPotionUsed(CombatState combatState, PotionModel potion, Creature? target)
+    public static void AfterPotionUsed(CombatStateType combatState, PotionModel potion, Creature? target)
     {
         Safe.Run(() =>
         {
@@ -1569,6 +1818,9 @@ public static class PotionContextPatch
     {
         Safe.Run(() =>
         {
+            // Multiplayer: only track potions used by the local player.
+            if (!CombatHistoryPatch.IsLocalPlayer(__instance.Owner)) return;
+
             var potionId = __instance.Id.Entry;
             if (!string.IsNullOrEmpty(potionId))
             {
@@ -1673,7 +1925,7 @@ public static class KillingBlowPatcher
     // NOTE: Parameter names MUST match the compiled DLL, not the decompiled source.
     // Compiled: results (not damageResult), target (not originalTarget)
     public static void CaptureKillingBlow(
-        CombatState combatState,
+        CombatStateType combatState,
         Creature? dealer,
         DamageResult results,
         Creature target,
@@ -1697,7 +1949,11 @@ public static class KillingBlowPatcher
             Safe.Info($"[KillingBlow] Capturing missed damage: {cardSourceId ?? "?"} → {results.TotalDamage} to {target}");
 
             // Invincible-phase guard — same reasoning as AfterDamageReceived.
+#if STS2_GE_V105
+            bool invincible = receiver.HpDisplay.IsInfinite();
+#else
             bool invincible = receiver.ShowsInfiniteHp;
+#endif
 
             CombatTracker.Instance.OnDamageDealt(
                 results.TotalDamage,
@@ -2237,7 +2493,7 @@ public static class HandDrawBonusPatch
     // by its Amount. Centralized so adding new energy-bonus powers is trivial.
     [HarmonyPatch(typeof(Hook), nameof(Hook.AfterEnergyReset))]
     [HarmonyPostfix]
-    public static void AfterEnergyResetAttribution(CombatState combatState, Player player)
+    public static void AfterEnergyResetAttribution(CombatStateType combatState, Player player)
     {
         Safe.Run(() =>
         {
@@ -2641,35 +2897,49 @@ public static class TempStrengthRevertPatch
 public static class CardGenerationOriginPatch
 {
     [HarmonyPatch(typeof(Hook), nameof(Hook.AfterCardGeneratedForCombat))]
+    // v0.105.0+: bool addedByPlayer → Player? creator (semantic change)
+#if STS2_GE_V105
+    [HarmonyPostfix]
+    public static void AfterCardGenerated(CardModel card, Player? creator)
+    {
+        Safe.Run(() =>
+        {
+            if (creator == null) return;
+            RecordCardOriginInternal(card);
+        });
+    }
+#else
     [HarmonyPostfix]
     public static void AfterCardGenerated(CardModel card, bool addedByPlayer)
     {
         Safe.Run(() =>
         {
             if (!addedByPlayer) return;
+            RecordCardOriginInternal(card);
+        });
+    }
+#endif
 
-            // If there's an active card context (e.g., CHARGE!! generating cards)
-            var activeCard = CombatTracker.Instance.ActiveCardId;
-            if (activeCard != null)
+    private static void RecordCardOriginInternal(CardModel card)
+    {
+        var activeCard = CombatTracker.Instance.ActiveCardId;
+        if (activeCard != null)
+        {
+            CombatTracker.Instance.RecordCardOrigin(
+                card.GetHashCode(), activeCard, "card");
+            return;
+        }
+
+        var powerSourceId = CombatTracker.Instance.ActivePowerSourceId;
+        if (powerSourceId != null)
+        {
+            var source = ContributionMap.Instance.GetPowerSource(powerSourceId);
+            if (source != null)
             {
                 CombatTracker.Instance.RecordCardOrigin(
-                    card.GetHashCode(), activeCard, "card");
-                return;
+                    card.GetHashCode(), source.SourceId, source.SourceType);
             }
-
-            // If there's an active power source (e.g., SpectrumShift generating cards)
-            var powerSourceId = CombatTracker.Instance.ActivePowerSourceId;
-            if (powerSourceId != null)
-            {
-                // Resolve to the card that created the power
-                var source = ContributionMap.Instance.GetPowerSource(powerSourceId);
-                if (source != null)
-                {
-                    CombatTracker.Instance.RecordCardOrigin(
-                        card.GetHashCode(), source.SourceId, source.SourceType);
-                }
-            }
-        });
+        }
     }
 }
 
@@ -2989,7 +3259,7 @@ public static class OrbPassivePatch
             {
                 ContributionMap.Instance.SetActiveOrbContext(
                     extra.Value.id, extra.Value.type, source.OrbType);
-                SetOrbFocusContrib(orb);
+                SetOrbValueContribs(orb);
                 return;
             }
         }
@@ -2998,14 +3268,14 @@ public static class OrbPassivePatch
         if (duringCardPlay && ContributionMap.Instance.OrbFirstTriggerUsed)
         {
             ContributionMap.Instance.ClearActiveOrbContext();
-            SetOrbFocusContrib(orb);
+            SetOrbValueContribs(orb);
             return;
         }
 
         ContributionMap.Instance.SetActiveOrbContext(
             source.SourceId, source.SourceType, source.OrbType);
         if (duringCardPlay) ContributionMap.Instance.MarkOrbFirstTriggerUsed();
-        SetOrbFocusContrib(orb);
+        SetOrbValueContribs(orb);
     }
 
     [HarmonyPatch(typeof(OrbCmd), nameof(OrbCmd.Passive))]
@@ -3015,21 +3285,39 @@ public static class OrbPassivePatch
         Safe.Run(() => ContributionMap.Instance.ClearActiveOrbContext());
     }
 
-    /// <summary>Shared Focus computation used by both passive and evoke patches.</summary>
-    internal static void SetOrbFocusContrib(OrbModel orb)
+    /// <summary>
+    /// Record all orb value modifiers (Focus power + relics like Infused Core)
+    /// so they get credited as ModifierDamage/ModifierBlock when the orb fires.
+    /// </summary>
+    internal static void SetOrbValueContribs(OrbModel orb)
     {
         if (orb is PlasmaOrb) return;
-        var focusSource = ContributionMap.Instance.GetPowerSource("FOCUS_POWER")
-                       ?? ContributionMap.Instance.GetPowerSource("FOCUS");
-        if (focusSource == null) return;
         var player = orb.Owner;
         if (player?.Creature == null) return;
-        var focusPower = player.Creature.GetPower<FocusPower>();
-        if (focusPower != null && focusPower.Amount > 0)
+
+        // Focus — additive per-point bonus from Focus power
+        var focusSource = ContributionMap.Instance.GetPowerSource("FOCUS_POWER")
+                       ?? ContributionMap.Instance.GetPowerSource("FOCUS");
+        if (focusSource != null)
         {
-            ContributionMap.Instance.SetPendingOrbFocusContrib(
-                focusSource.SourceId, focusSource.SourceType,
-                (int)focusPower.Amount);
+            var focusPower = player.Creature.GetPower<FocusPower>();
+            if (focusPower != null && focusPower.Amount > 0)
+                ContributionMap.Instance.AddOrbValueContrib(
+                    focusSource.SourceId, focusSource.SourceType,
+                    (int)focusPower.Amount);
+        }
+
+        // Infused Core — +1 per Lightning orb (v0.105.0 buff)
+        if (orb is LightningOrb)
+        {
+            var infusedCore = player.GetRelic<InfusedCore>();
+            if (infusedCore != null)
+            {
+                int extra = (int)infusedCore.DynamicVars["ExtraDamage"].BaseValue;
+                if (extra > 0)
+                    ContributionMap.Instance.AddOrbValueContrib(
+                        "INFUSED_CORE", "relic", extra);
+            }
         }
     }
 }
@@ -3102,7 +3390,7 @@ public static class OrbEvokePatch
         if (duringCardPlay && ContributionMap.Instance.OrbFirstTriggerUsed)
         {
             ContributionMap.Instance.ClearActiveOrbContext();
-            OrbPassivePatch.SetOrbFocusContrib(orb);
+            OrbPassivePatch.SetOrbValueContribs(orb);
             return;
         }
 
@@ -3112,7 +3400,7 @@ public static class OrbEvokePatch
         if (duringCardPlay)
             ContributionMap.Instance.MarkOrbFirstTriggerUsed();
 
-        OrbPassivePatch.SetOrbFocusContrib(orb);
+        OrbPassivePatch.SetOrbValueContribs(orb);
     }
 }
 

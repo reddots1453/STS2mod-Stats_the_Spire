@@ -17,15 +17,24 @@ async def compute_bulk_stats(
     version: str,
     min_asc: int,
     max_asc: int,
+    min_wr: float = 0.0,
+    branch: str = "all",
 ) -> BulkStatsBundle:
-    """Run all aggregation queries and assemble a complete bundle."""
+    """Run all aggregation queries and assemble a complete bundle.
+
+    ``min_wr`` (0.0–1.0) filters contributing runs by the uploader's
+    cumulative local win rate (``runs.player_win_rate``, migration 006).
+    Detail tables are filtered through a correlated ``run_id IN (...)``
+    subquery so the same filter applies uniformly regardless of whether
+    the detail table carries a denormalized ``player_win_rate`` column.
+    """
 
     async with pool.acquire() as conn:
-        total_runs = await _count_runs(conn, character, version, min_asc, max_asc)
-        cards = await _aggregate_cards(conn, character, version, min_asc, max_asc)
-        relics = await _aggregate_relics(conn, character, version, min_asc, max_asc)
-        events = await _aggregate_events(conn, character, version, min_asc, max_asc)
-        encounters = await _aggregate_encounters(conn, character, version, min_asc, max_asc)
+        total_runs = await _count_runs(conn, character, version, min_asc, max_asc, min_wr, branch)
+        cards = await _aggregate_cards(conn, character, version, min_asc, max_asc, min_wr, branch)
+        relics = await _aggregate_relics(conn, character, version, min_asc, max_asc, min_wr, branch)
+        events = await _aggregate_events(conn, character, version, min_asc, max_asc, min_wr, branch)
+        encounters = await _aggregate_encounters(conn, character, version, min_asc, max_asc, min_wr, branch)
 
     bundle = BulkStatsBundle(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -37,8 +46,8 @@ async def compute_bulk_stats(
     )
 
     logger.info(
-        "Aggregated %s asc%d-%d ver=%s: %d runs, %d cards, %d relics, %d events, %d encounters",
-        character, min_asc, max_asc, version,
+        "Aggregated %s asc%d-%d ver=%s br=%s wr>=%.2f: %d runs, %d cards, %d relics, %d events, %d encounters",
+        character, min_asc, max_asc, version, branch, min_wr,
         total_runs, len(cards), len(relics), len(events), len(encounters),
     )
     return bundle
@@ -47,9 +56,13 @@ async def compute_bulk_stats(
 # ── Internal query functions ────────────────────────────────
 
 
-def _build_where(char: str, ver: str) -> tuple[str, list]:
-    """Build a dynamic WHERE clause, skipping character/version when 'all'."""
-    conditions = []
+def _build_where(char: str, ver: str, branch: str = "all") -> tuple[list, list, int]:
+    """Shared char/version/branch conditions. Returns (conditions, params, next_idx).
+
+    The caller is responsible for appending the ascension BETWEEN clause
+    plus any win-rate filter — see ``_where_with_asc`` and ``_where_runs_only``.
+    """
+    conditions: list = []
     params: list = []
     idx = 1
 
@@ -63,22 +76,64 @@ def _build_where(char: str, ver: str) -> tuple[str, list]:
         params.append(ver)
         idx += 1
 
+    if branch != "all":
+        conditions.append(f"branch = ${idx}")
+        params.append(branch)
+        idx += 1
+
+    return conditions, params, idx
+
+
+def _where_with_asc(
+    char: str, ver: str, lo: int, hi: int, min_wr: float = 0.0,
+    branch: str = "all",
+) -> tuple[str, list]:
+    """WHERE for a detail table (card_choices / event_choices / encounter_records /
+    final_deck / shop_card_offerings / shop_purchases / relic_records / …).
+
+    Win-rate filter goes through ``run_id IN (SELECT id FROM runs WHERE …)`` so
+    it works on every detail table regardless of whether it carries a local
+    ``player_win_rate`` column. Postgres compiles this to a semi-join on
+    ``runs.id`` (PRIMARY KEY) and, when ``min_wr > 0``, ``idx_runs_win_rate``
+    keeps the inner scan bounded.
+    """
+    conditions, params, idx = _build_where(char, ver, branch)
     conditions.append(f"ascension BETWEEN ${idx} AND ${idx + 1}")
-    # params for lo, hi are appended by caller
-    return (" WHERE " + " AND ".join(conditions) if conditions else "", params, idx)
-
-
-def _where_with_asc(char: str, ver: str, lo: int, hi: int) -> tuple[str, list]:
-    """Return (where_clause, full_params_list) ready for query."""
-    clause, params, _ = _build_where(char, ver)
     params.extend([lo, hi])
+    idx += 2
+    if min_wr > 0:
+        conditions.append(
+            f"run_id IN (SELECT id FROM runs WHERE player_win_rate >= ${idx})"
+        )
+        params.append(min_wr)
+    clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+    return clause, params
+
+
+def _where_runs_only(
+    char: str, ver: str, lo: int, hi: int, min_wr: float = 0.0,
+    branch: str = "all",
+) -> tuple[str, list]:
+    """WHERE for the ``runs`` table itself. ``runs`` doesn't have a ``run_id``
+    column, so we can't use the subquery form — hit the local column directly.
+    """
+    conditions, params, idx = _build_where(char, ver, branch)
+    conditions.append(f"ascension BETWEEN ${idx} AND ${idx + 1}")
+    params.extend([lo, hi])
+    idx += 2
+    if min_wr > 0:
+        conditions.append(f"player_win_rate >= ${idx}")
+        params.append(min_wr)
+    clause = " WHERE " + " AND ".join(conditions) if conditions else ""
     return clause, params
 
 
 async def _count_runs(
     conn: asyncpg.Connection, char: str, ver: str, lo: int, hi: int,
+    min_wr: float = 0.0,
+    branch: str = "all",
 ) -> int:
-    where, params = _where_with_asc(char, ver, lo, hi)
+    where, params = _where_runs_only(char, ver, lo, hi, min_wr, branch)
     row = await conn.fetchval(
         f"SELECT COUNT(*) FROM runs {where}", *params,
     )
@@ -87,16 +142,26 @@ async def _count_runs(
 
 async def _aggregate_cards(
     conn: asyncpg.Connection, char: str, ver: str, lo: int, hi: int,
+    min_wr: float = 0.0,
+    branch: str = "all",
 ) -> dict[str, CardStats]:
-    where, params = _where_with_asc(char, ver, lo, hi)
+    where, params = _where_with_asc(char, ver, lo, hi, min_wr, branch)
 
     # ── Pick rate & win rate from card_choices ──
+    # Round 16: sample_size is COUNT(DISTINCT run_id) — the number of runs
+    # that offered this card at least once — not COUNT(*) (the number of
+    # rewards rows containing this card). The latter inflates by avg
+    # rewards-per-run (≈ 3-5 for any common card) and was confusing UX:
+    # F9 says "数据范围: 1000 局" but a Strike's "样本: 4500" appeared
+    # 4× larger. pick_rate / win_rate stay row-based (out of every offer,
+    # how often was it picked / did the picker win) — those semantics
+    # need the raw row count, not distinct runs.
     rows = await conn.fetch(f"""
         SELECT
             card_id,
             AVG(was_picked::int)::real       AS pick_rate,
             AVG(CASE WHEN was_picked THEN win::int END)::real AS win_rate,
-            COUNT(*)                          AS sample_size
+            COUNT(DISTINCT run_id)            AS sample_size
         FROM card_choices
         {where}
         GROUP BY card_id
@@ -117,7 +182,7 @@ async def _aggregate_cards(
         {where}
         GROUP BY card_id
     """, *params)
-    total_runs = await _count_runs(conn, char, ver, lo, hi)
+    total_runs = await _count_runs(conn, char, ver, lo, hi, min_wr, branch)
     if total_runs > 0:
         for r in removal_rows:
             cid = r["card_id"]
@@ -184,20 +249,25 @@ async def _aggregate_cards(
 
 async def _aggregate_relics(
     conn: asyncpg.Connection, char: str, ver: str, lo: int, hi: int,
+    min_wr: float = 0.0,
+    branch: str = "all",
 ) -> dict[str, RelicStats]:
-    where, params = _where_with_asc(char, ver, lo, hi)
+    where, params = _where_with_asc(char, ver, lo, hi, min_wr, branch)
 
+    # Round 16: relic_records already has at most one row per (run, relic),
+    # so COUNT(DISTINCT run_id) ≡ COUNT(*) in practice — kept here for
+    # symmetry with cards and to stay safe if the schema ever changes.
     rows = await conn.fetch(f"""
         SELECT
             relic_id,
-            AVG(win::int)::real  AS win_rate,
-            COUNT(*)             AS sample_size
+            AVG(win::int)::real           AS win_rate,
+            COUNT(DISTINCT run_id)        AS sample_size
         FROM relic_records
         {where}
         GROUP BY relic_id
     """, *params)
 
-    total_runs = await _count_runs(conn, char, ver, lo, hi)
+    total_runs = await _count_runs(conn, char, ver, lo, hi, min_wr, branch)
 
     result: dict[str, RelicStats] = {}
     for r in rows:
@@ -226,8 +296,10 @@ async def _aggregate_relics(
 
 async def _aggregate_events(
     conn: asyncpg.Connection, char: str, ver: str, lo: int, hi: int,
+    min_wr: float = 0.0,
+    branch: str = "all",
 ) -> dict[str, EventStats]:
-    where, params = _where_with_asc(char, ver, lo, hi)
+    where, params = _where_with_asc(char, ver, lo, hi, min_wr, branch)
 
     # ── Static events (option_index >= 0, no combo_key) ──
     rows = await conn.fetch(f"""
@@ -324,8 +396,10 @@ async def _aggregate_events(
 
 async def _aggregate_encounters(
     conn: asyncpg.Connection, char: str, ver: str, lo: int, hi: int,
+    min_wr: float = 0.0,
+    branch: str = "all",
 ) -> dict[str, EncounterStats]:
-    where, params = _where_with_asc(char, ver, lo, hi)
+    where, params = _where_with_asc(char, ver, lo, hi, min_wr, branch)
 
     rows = await conn.fetch(f"""
         SELECT

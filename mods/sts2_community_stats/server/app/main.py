@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import orjson
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, Response, HTTPException, Query
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, FileResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -77,6 +77,33 @@ app = FastAPI(
 # Gzip for large bulk responses
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+
+# ── Middleware: request body size limit ───────────────────────
+# Defense-in-depth against oversized payloads. nginx enforces the
+# same limit (client_max_body_size 1m), but if someone reaches the
+# API container directly (misconfigured firewall / Docker network),
+# FastAPI still rejects before streaming the body to memory/disk.
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            cl = int(content_length)
+            if cl > config.MAX_REQUEST_BODY_SIZE:
+                logger.warning(
+                    "Rejected oversized request: %d bytes (limit=%d) from %s",
+                    cl, config.MAX_REQUEST_BODY_SIZE,
+                    request.client.host if request.client else "unknown",
+                )
+                return ORJSONResponse(
+                    status_code=413,
+                    content={"error": "Request body too large."},
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -109,7 +136,8 @@ async def check_mod_version(request: Request, call_next):
 # ── Health ──────────────────────────────────────────────────
 
 @app.get("/health")
-async def health():
+@limiter.limit(config.RATE_LIMIT_HEALTH)
+async def health(request: Request):
     errors = {}
     try:
         pool = get_pool()
@@ -158,11 +186,13 @@ async def get_bulk_stats(
     ver: str = Query(..., max_length=16),
     min_asc: int = Query(0, ge=0, le=20),
     max_asc: int = Query(20, ge=0, le=20),
+    min_wr: float = Query(0.0, ge=0.0, le=1.0),
+    branch: str = Query("all", max_length=8),
 ):
     char = char.upper()
     redis = get_redis()
     asc_range = map_asc_range(min_asc, max_asc)
-    key = bulk_key(char, asc_range, ver)
+    key = bulk_key(char, asc_range, ver, min_wr, branch)
 
     # Try Redis cache
     cached = await redis.get(key)
@@ -173,7 +203,7 @@ async def get_bulk_stats(
         )
 
     # Cache miss — compute on the fly
-    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc)
+    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc, min_wr, branch=branch)
     json_bytes = orjson.dumps(bundle.model_dump())
 
     # Store in Redis
@@ -193,13 +223,15 @@ async def get_card_stats(
     ver: str = Query(..., max_length=16),
     min_asc: int = Query(0, ge=0, le=20),
     max_asc: int = Query(20, ge=0, le=20),
+    min_wr: float = Query(0.0, ge=0.0, le=1.0),
+    branch: str = Query("all", max_length=8),
 ):
     char = char.upper()
     card_ids = [c.strip() for c in cards.split(",") if c.strip()]
     if not card_ids or len(card_ids) > 50:
         raise HTTPException(400, "Provide 1-50 card IDs")
 
-    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc)
+    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc, min_wr, branch=branch)
     result = {cid: bundle.cards.get(cid) for cid in card_ids}
     return result
 
@@ -215,13 +247,15 @@ async def get_relic_stats(
     ver: str = Query(..., max_length=16),
     min_asc: int = Query(0, ge=0, le=20),
     max_asc: int = Query(20, ge=0, le=20),
+    min_wr: float = Query(0.0, ge=0.0, le=1.0),
+    branch: str = Query("all", max_length=8),
 ):
     char = char.upper()
     relic_ids = [r.strip() for r in relics.split(",") if r.strip()]
     if not relic_ids or len(relic_ids) > 50:
         raise HTTPException(400, "Provide 1-50 relic IDs")
 
-    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc)
+    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc, min_wr, branch=branch)
     result = {rid: bundle.relics.get(rid) for rid in relic_ids}
     return result
 
@@ -237,9 +271,11 @@ async def get_event_stats(
     ver: str = Query(..., max_length=16),
     min_asc: int = Query(0, ge=0, le=20),
     max_asc: int = Query(20, ge=0, le=20),
+    min_wr: float = Query(0.0, ge=0.0, le=1.0),
+    branch: str = Query("all", max_length=8),
 ):
     char = char.upper()
-    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc)
+    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc, min_wr, branch=branch)
     stats = bundle.events.get(event_id)
     if stats is None:
         raise HTTPException(404, f"No data for event {event_id}")
@@ -257,13 +293,15 @@ async def get_encounter_stats(
     ver: str = Query(..., max_length=16),
     min_asc: int = Query(0, ge=0, le=20),
     max_asc: int = Query(20, ge=0, le=20),
+    min_wr: float = Query(0.0, ge=0.0, le=1.0),
+    branch: str = Query("all", max_length=8),
 ):
     char = char.upper()
     encounter_ids = [e.strip() for e in ids.split(",") if e.strip()]
     if not encounter_ids or len(encounter_ids) > 50:
         raise HTTPException(400, "Provide 1-50 encounter IDs")
 
-    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc)
+    bundle = await compute_bulk_stats(get_pool(), char, ver, min_asc, max_asc, min_wr, branch=branch)
     result = {eid: bundle.encounters.get(eid) for eid in encounter_ids}
     return result
 
@@ -278,3 +316,57 @@ async def get_versions():
             "SELECT version FROM game_versions WHERE is_active = TRUE ORDER BY first_seen DESC"
         )
     return [r["version"] for r in rows]
+
+
+# ── Auto-update ──────────────────────────────────────────────
+
+import os as _os  # noqa: E402
+
+_UPDATES_ROOT = _os.path.join(_os.path.dirname(__file__), "..", "..", "updates")
+_KNOWN_EDITIONS = {"community", "local"}
+_EDITION_DLL = {
+    "community": "sts2_community_stats.dll",
+    "local": "sts2_statsthespire_local.dll",
+}
+
+
+@app.get("/v1/meta/update-info")
+@limiter.limit("30/minute")
+async def get_update_info(
+    request: Request,
+    edition: str = Query("community", max_length=16),
+    current: str = Query("0.0.0", max_length=16),
+):
+    if edition not in _KNOWN_EDITIONS:
+        raise HTTPException(400, f"Unknown edition: {edition}")
+    dll_name = _EDITION_DLL[edition]
+    version_path = _os.path.join(_UPDATES_ROOT, edition, "version.txt")
+    try:
+        with open(version_path) as f:
+            latest = f.read().strip()
+    except FileNotFoundError:
+        latest = "0.0.0"
+    return {
+        "edition": edition,
+        "latest": latest,
+        "update_available": latest != current,
+        "download_url": f"/v1/updates/{edition}/{dll_name}",
+    }
+
+
+@app.get("/v1/updates/{edition}/{dll_name}")
+@limiter.limit("30/minute")
+async def download_update(
+    request: Request,
+    edition: str,
+    dll_name: str,
+):
+    if edition not in _KNOWN_EDITIONS:
+        raise HTTPException(400, f"Unknown edition: {edition}")
+    if dll_name != _EDITION_DLL.get(edition, ""):
+        raise HTTPException(400, "DLL name mismatch")
+    dll_path = _os.path.join(_UPDATES_ROOT, edition, dll_name)
+    if not _os.path.exists(dll_path):
+        raise HTTPException(404, "Update not found")
+    return FileResponse(dll_path, media_type="application/octet-stream",
+                        filename="sts2_community_stats.dll")

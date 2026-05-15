@@ -39,7 +39,14 @@ public sealed class StatsCache
 
     public void Invalidate(string key) => _memory.TryRemove(key, out _);
 
-    public void InvalidateAll() => _memory.Clear();
+    public void InvalidateAll()
+    {
+        _memory.Clear();
+        // Also remove disk cache so stale bundles (e.g. from before a
+        // server-side aggregation fix) can't be served as fallback when
+        // the filter changes.
+        CleanupDisk();
+    }
 
     // ── Disk Cache ──────────────────────────────────────────
 

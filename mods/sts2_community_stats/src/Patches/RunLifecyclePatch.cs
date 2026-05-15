@@ -23,7 +23,7 @@ public static class RunLifecyclePatch
         {
             Safe.Info("[DIAG:RunLifecycle] SetUpNewSinglePlayer Postfix fired");
             RunDataCollector.OnRunStart();
-            TryHydrateLiveState();
+            TryHydrateLiveState(state?.Rng?.StringSeed);
             // PRD §3.9 / §3.17 round 9: top-bar indicators get built once
             // per run (lifetime mirrors NTopBar's). Defer one frame so
             // NRun.GlobalUi.TopBar is fully laid out by the time we attach.
@@ -75,7 +75,7 @@ public static class RunLifecyclePatch
         {
             Safe.Info("[DIAG:RunLifecycle] SetUpSavedSinglePlayer Postfix fired");
             RunDataCollector.OnRunStart();
-            TryHydrateLiveState();
+            TryHydrateLiveState(state?.Rng?.StringSeed);
             CommunityStats.Patches.CombatUiOverlayPatch.OnRunStarted();
 
             var player = state?.Players?.FirstOrDefault();
@@ -98,7 +98,7 @@ public static class RunLifecyclePatch
         {
             Safe.Info("[DIAG:RunLifecycle] SetUpSavedMultiPlayer Postfix fired");
             RunDataCollector.OnRunStart();
-            TryHydrateLiveState();
+            TryHydrateLiveState(state?.Rng?.StringSeed);
             CommunityStats.Patches.CombatUiOverlayPatch.OnRunStarted();
         });
     }
@@ -110,7 +110,7 @@ public static class RunLifecyclePatch
         Safe.Run(() =>
         {
             RunDataCollector.OnRunStart();
-            TryHydrateLiveState();
+            TryHydrateLiveState(state?.Rng?.StringSeed);
             CommunityStats.Patches.CombatUiOverlayPatch.OnRunStarted();
 
             // PRD §3.15 — multiplayer compat: prefer the local player; fall back to
@@ -138,11 +138,10 @@ public static class RunLifecyclePatch
     /// check for a `_live.json` snapshot for that seed and rehydrate the
     /// CombatTracker / RunContributionAggregator from it.
     /// </summary>
-    private static void TryHydrateLiveState()
+    private static void TryHydrateLiveState(string? seed)
     {
         try
         {
-            var seed = Util.ContributionPersistence.GetActiveSeed();
             if (string.IsNullOrEmpty(seed)) return;
             var snap = Util.ContributionPersistence.LoadLiveState(seed!);
             if (snap == null) return;

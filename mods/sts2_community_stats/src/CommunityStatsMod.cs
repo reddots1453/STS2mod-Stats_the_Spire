@@ -35,6 +35,9 @@ public static class CommunityStatsMod
         // Ensure data directories exist
         ModConfig.EnsureDirectories();
 
+        // Background: check for mod updates.
+        _ = Updater.Instance.CheckForUpdateAsync();
+
         // Prune contribution snapshots older than 90 days (PRD §3.12).
         ContributionPersistence.PruneOldFiles();
 
@@ -103,12 +106,21 @@ public static class CommunityStatsMod
         Patches.CardUpgradePatch.SubscribeRefresh();
         Patches.CardRemovalPatch.SubscribeRefresh();
         Patches.RelicHoverPatch.SubscribeRefresh();
+        Patches.MapPointPatch.SubscribeRefresh();
 
         // Register ModManager.OnMetricsUpload hook for run data upload
         RunLifecyclePatch.RegisterMetricsHook();
 
         // Listen for filter changes to trigger data re-fetch
         FilterPanel.FilterApplied += OnFilterApplied;
+
+        // Language-only changes: re-render all visible UI immediately with
+        // current StatsProvider data — no API reload needed.
+        Config.L.LanguageChanged += () =>
+        {
+            Safe.Info("[LangChanged] triggering immediate UI re-render");
+            Safe.Run(() => StatsProvider.FireDataRefreshed());
+        };
 
         // Register hotkeys and attach UI panels to scene tree
         Safe.Run(() => RegisterHotkeys());
@@ -125,6 +137,16 @@ public static class CommunityStatsMod
         // doesn't finish another run after restart.
         Safe.RunAsync(() => Util.OfflineQueue.DrainAsync(
             json => Api.ApiClient.Instance.PostJsonWithStatusAsync("runs", json)));
+
+        // Trigger initial community data fetch — otherwise only test data
+        // shows until the user touches the F9 filter or starts a run.
+        Safe.RunAsync(async () =>
+        {
+            var filter = ModConfig.CurrentFilter;
+            var resolvedChar = filter.ResolveCharacter();
+            Safe.Info($"[DIAG:InitPreload] resolvedChar={resolvedChar}, filter={filter.ToQueryString()}");
+            await StatsProvider.Instance.OnFilterChangedAsync(resolvedChar, filter);
+        });
 
         Safe.Info("Stats the Spire initialized successfully");
     }

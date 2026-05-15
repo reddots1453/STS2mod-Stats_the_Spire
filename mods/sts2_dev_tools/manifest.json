@@ -1,0 +1,11 @@
+{
+  "id": "sts2_dev_tools",
+  "name": "STS2 Dev Tools",
+  "author": "Dev",
+  "description": "Developer tools for testing: unlock all characters, cards, ascensions, and timelines.",
+  "version": "0.1.0",
+  "has_dll": true,
+  "has_pck": false,
+  "affects_gameplay": false,
+  "dependencies": []
+}

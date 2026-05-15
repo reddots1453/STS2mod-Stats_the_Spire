@@ -44,11 +44,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
             run_id: int = await conn.fetchval(
                 """INSERT INTO runs
                    (game_version, mod_version, character, ascension, win,
-                    num_players, floor_reached, run_hash, player_win_rate)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id""",
+                    num_players, floor_reached, run_hash, player_win_rate, branch)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id""",
                 payload.game_version, payload.mod_version, payload.character,
                 payload.ascension, payload.win, payload.num_players,
                 payload.floor_reached, payload.run_hash, payload.player_win_rate,
+                payload.branch,
             )
 
             # ── Card choices ─────────────────────────────────
@@ -56,13 +57,13 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO card_choices
                        (run_id, game_version, character, ascension, player_win_rate,
-                        win, num_players, card_id, upgrade_level, was_picked, floor)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
+                        win, num_players, card_id, upgrade_level, was_picked, floor, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)""",
                     [
                         (run_id, payload.game_version, payload.character,
                          payload.ascension, payload.player_win_rate, payload.win,
                          payload.num_players, c.card_id, c.upgrade_level,
-                         c.was_picked, c.floor)
+                         c.was_picked, c.floor, payload.branch)
                         for c in payload.card_choices
                     ],
                 )
@@ -73,13 +74,13 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                     """INSERT INTO event_choices
                        (run_id, game_version, character, ascension, player_win_rate,
                         win, event_id, option_index, total_options,
-                        combo_key, chosen_option_id)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
+                        combo_key, chosen_option_id, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)""",
                     [
                         (run_id, payload.game_version, payload.character,
                          payload.ascension, payload.player_win_rate, payload.win,
                          e.event_id, e.option_index, e.total_options,
-                         e.combo_key, e.chosen_option_id)
+                         e.combo_key, e.chosen_option_id, payload.branch)
                         for e in payload.event_choices
                     ],
                 )
@@ -89,11 +90,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO relic_records
                        (run_id, game_version, character, ascension, player_win_rate,
-                        win, relic_id)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                        win, relic_id, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
                     [
                         (run_id, payload.game_version, payload.character,
-                         payload.ascension, payload.player_win_rate, payload.win, r)
+                         payload.ascension, payload.player_win_rate, payload.win, r,
+                         payload.branch)
                         for r in payload.final_relics
                     ],
                 )
@@ -103,12 +105,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO shop_purchases
                        (run_id, game_version, character, ascension, player_win_rate,
-                        win, item_id, item_type, cost, floor)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
+                        win, item_id, item_type, cost, floor, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
                     [
                         (run_id, payload.game_version, payload.character,
                          payload.ascension, payload.player_win_rate, payload.win,
-                         s.item_id, s.item_type, s.cost, s.floor)
+                         s.item_id, s.item_type, s.cost, s.floor, payload.branch)
                         for s in payload.shop_purchases
                     ],
                 )
@@ -118,11 +120,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO card_removals
                        (run_id, game_version, character, ascension, win,
-                        card_id, source, floor)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                        card_id, source, floor, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
                     [
                         (run_id, payload.game_version, payload.character,
-                         payload.ascension, payload.win, r.card_id, r.source, r.floor)
+                         payload.ascension, payload.win, r.card_id, r.source, r.floor,
+                         payload.branch)
                         for r in payload.card_removals
                     ],
                 )
@@ -132,11 +135,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO card_upgrades
                        (run_id, game_version, character, ascension, win,
-                        card_id, source)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                        card_id, source, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
                     [
                         (run_id, payload.game_version, payload.character,
-                         payload.ascension, payload.win, u.card_id, u.source)
+                         payload.ascension, payload.win, u.card_id, u.source,
+                         payload.branch)
                         for u in payload.card_upgrades
                     ],
                 )
@@ -146,11 +150,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO final_deck
                        (run_id, game_version, character, ascension, win,
-                        card_id, upgrade_level)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                        card_id, upgrade_level, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
                     [
                         (run_id, payload.game_version, payload.character,
-                         payload.ascension, payload.win, d.card_id, d.upgrade_level)
+                         payload.ascension, payload.win, d.card_id, d.upgrade_level,
+                         payload.branch)
                         for d in payload.final_deck
                     ],
                 )
@@ -160,11 +165,12 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                 await conn.executemany(
                     """INSERT INTO shop_card_offerings
                        (run_id, game_version, character, ascension, win,
-                        card_id, floor)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                        card_id, floor, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
                     [
                         (run_id, payload.game_version, payload.character,
-                         payload.ascension, payload.win, o.card_id, o.floor)
+                         payload.ascension, payload.win, o.card_id, o.floor,
+                         payload.branch)
                         for o in payload.shop_card_offerings
                     ],
                 )
@@ -175,12 +181,13 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                     """INSERT INTO encounter_records
                        (run_id, game_version, character, ascension,
                         encounter_id, encounter_type, damage_taken,
-                        turns_taken, player_died, floor)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
+                        turns_taken, player_died, floor, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
                     [
                         (run_id, payload.game_version, payload.character,
                          payload.ascension, e.encounter_id, e.encounter_type,
-                         e.damage_taken, e.turns_taken, e.player_died, e.floor)
+                         e.damage_taken, e.turns_taken, e.player_died, e.floor,
+                         payload.branch)
                         for e in payload.encounters
                     ],
                 )
@@ -198,8 +205,8 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                         cards_drawn, energy_gained, hp_healed,
                         stars_contribution, mitigated_by_str,
                         modifier_damage, modifier_block, self_damage,
-                        upgrade_damage, upgrade_block, origin_source_id)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)""",
+                        upgrade_damage, upgrade_block, origin_source_id, branch)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)""",
                     [
                         (run_id, payload.game_version, payload.character,
                          payload.ascension, c.source_id, c.source_type,
@@ -209,7 +216,8 @@ async def ingest_run(pool: asyncpg.Pool, payload: RunUploadPayload) -> int:
                          c.cards_drawn, c.energy_gained, c.hp_healed,
                          c.stars_contribution, c.mitigated_by_str,
                          c.modifier_damage, c.modifier_block, c.self_damage,
-                         c.upgrade_damage, c.upgrade_block, c.origin_source_id)
+                         c.upgrade_damage, c.upgrade_block, c.origin_source_id,
+                         payload.branch)
                         for c in payload.contributions
                     ],
                 )
@@ -261,6 +269,25 @@ async def _backfill_existing_run(
             run_id, payload.player_win_rate,
         )
 
+    # branch backfill — when a history import (branch="unknown") is later
+    # re-uploaded by a live client (branch="release"/"beta"), upgrade the
+    # unknown tag to the known one. Also covers old pre-feature rows.
+    if payload.branch not in ("", "unknown"):
+        await conn.execute(
+            """UPDATE runs SET branch = $2
+               WHERE id = $1 AND branch = 'unknown'""",
+            run_id, payload.branch,
+        )
+        for tbl in ("card_choices", "event_choices", "relic_records",
+                    "shop_purchases", "card_removals", "card_upgrades",
+                    "final_deck", "shop_card_offerings", "encounter_records",
+                    "contributions"):
+            await conn.execute(
+                f"""UPDATE {tbl} SET branch = $2
+                    WHERE run_id = $1 AND branch = 'unknown'""",
+                run_id, payload.branch,
+            )
+
     # shop_purchases — older ShopPatch builds missed colored-card buys and
     # recorded cost=0 via the MapHistory fallback. A newer payload contains
     # the authoritative list from ShopPurchasePersistence. Reset + reinsert
@@ -272,12 +299,12 @@ async def _backfill_existing_run(
         await conn.executemany(
             """INSERT INTO shop_purchases
                (run_id, game_version, character, ascension, player_win_rate,
-                win, item_id, item_type, cost, floor)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
+                win, item_id, item_type, cost, floor, branch)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
             [
                 (run_id, payload.game_version, payload.character,
                  payload.ascension, payload.player_win_rate, payload.win,
-                 s.item_id, s.item_type, s.cost, s.floor)
+                 s.item_id, s.item_type, s.cost, s.floor, payload.branch)
                 for s in payload.shop_purchases
             ],
         )
@@ -291,11 +318,12 @@ async def _backfill_existing_run(
         await conn.executemany(
             """INSERT INTO shop_card_offerings
                (run_id, game_version, character, ascension, win,
-                card_id, floor)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                card_id, floor, branch)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
             [
                 (run_id, payload.game_version, payload.character,
-                 payload.ascension, payload.win, o.card_id, o.floor)
+                 payload.ascension, payload.win, o.card_id, o.floor,
+                 payload.branch)
                 for o in payload.shop_card_offerings
             ],
         )

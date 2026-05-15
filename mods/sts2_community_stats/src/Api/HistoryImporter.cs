@@ -306,6 +306,7 @@ public static class HistoryImporter
             PlayerWinRate = retroWinRate,
             NumPlayers = 1,
             RunHash = ComputeHash(history),
+            Branch = "unknown",
         };
 
         // ── Shop purchases (prefer our persistence over MapHistory) ──
